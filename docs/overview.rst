@@ -1,7 +1,7 @@
 Overview
 ========
 
-The ``simulation`` package provides a configurable causal data generator.
+The ``dagsampler`` package provides a configurable causal data generator.
 
 Main features:
 

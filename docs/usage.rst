@@ -33,7 +33,7 @@ CLI
 
 .. code-block:: bash
 
-   simulation-generate \
+   dagsampler-generate \
      --config config.json \
      --output dataset.csv \
      --params-out params.json \

@@ -12,6 +12,6 @@ __all__ = [
 ]
 
 try:
-    __version__ = version("simulation")
+    __version__ = version("dagsampler")
 except PackageNotFoundError:  # pragma: no cover
     __version__ = "0.0.0"

@@ -4,7 +4,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.abspath("../src"))
 
-project = "simulation"
+project = "dagsampler"
 author = "Pavel Averin"
 copyright = f"{datetime.now():%Y}, {author}"
 release = "0.1.0"

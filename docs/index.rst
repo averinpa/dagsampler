@@ -1,4 +1,4 @@
-simulation documentation
+dagsampler documentation
 ========================
 
 Minimal Python package for generating synthetic data from causal DAGs.

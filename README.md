@@ -1,4 +1,4 @@
-# simulation
+# dagsampler
 
 Minimal Python package for generating synthetic data from causal DAGs.
 
@@ -45,10 +45,10 @@ params = result["parametrization"]
 
 ## CLI
 
-The package exposes `simulation-generate`.
+The package exposes `dagsampler-generate`.
 
 ```bash
-simulation-generate \
+dagsampler-generate \
   --config config.json \
   --output dataset.csv \
   --params-out params.json \
