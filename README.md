@@ -2,6 +2,8 @@
 
 Minimal Python package for generating synthetic data from causal DAGs.
 
+Documentation: https://averinpa.github.io/dagsampler/
+
 ## What it provides
 
 - `CausalDataGenerator` class for configurable simulation
