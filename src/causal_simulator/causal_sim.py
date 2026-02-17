@@ -4,10 +4,41 @@ import networkx as nx
 from scipy.special import expit
 import itertools
 import copy
+from networkx.algorithms.d_separation import is_d_separator
 
 # Safety guards to avoid exploding values that can cause Inf/NaN
 SAFE_PARENT_CLIP = 1e3
 SAFE_OUTPUT_CLIP = 1e12
+
+
+def _heteroskedastic_abs_first_parent(parent_data: pd.DataFrame) -> np.ndarray:
+    return 0.5 * np.abs(parent_data.iloc[:, 0].to_numpy())
+
+
+def _heteroskedastic_abs_named_plus_const(parent_data: pd.DataFrame) -> np.ndarray:
+    if "X" in parent_data.columns:
+        return 0.5 * np.abs(parent_data["X"].to_numpy()) + 0.1
+    if "Exo_StudentT" in parent_data.columns:
+        return 0.5 * np.abs(parent_data["Exo_StudentT"].to_numpy()) + 0.1
+    return 0.5 * np.abs(parent_data.iloc[:, 0].to_numpy()) + 0.1
+
+
+def _heteroskedastic_mean_abs_plus_const(parent_data: pd.DataFrame) -> np.ndarray:
+    return 0.5 * np.mean(np.abs(parent_data.to_numpy()), axis=1) + 0.1
+
+
+HETEROSKEDASTIC_FN_REGISTRY = {
+    "abs_first_parent": _heteroskedastic_abs_first_parent,
+    "abs_parent_plus_const": _heteroskedastic_abs_named_plus_const,
+    "mean_abs_plus_const": _heteroskedastic_mean_abs_plus_const,
+}
+
+LEGACY_HETEROSKEDASTIC_FUNC_ALIASES = {
+    "lambda p: 0.5 * np.abs(p.iloc[:, 0])": "abs_first_parent",
+    "lambda p: 0.5 * np.abs(p['Exo_StudentT']) + 0.1": "abs_parent_plus_const",
+    "lambda p: 0.5 * np.abs(p[\"X\"]) + 0.1": "abs_parent_plus_const",
+    "lambda p: 0.5 * np.mean(np.abs(p.values), axis=1) + 0.1": "mean_abs_plus_const",
+}
 
 class CausalDataGenerator:
     """
@@ -48,6 +79,8 @@ class CausalDataGenerator:
 
         self.graph = None
         self.data = None
+        self.node_types = {}
+        self.node_cardinalities = {}
         # This will store the exact parameters used, including sampled ones.
         self.final_parametrization = copy.deepcopy(self.config)
         if 'nodes' not in self.final_parametrization:
@@ -63,6 +96,18 @@ class CausalDataGenerator:
         values = np.nan_to_num(values, posinf=SAFE_OUTPUT_CLIP, neginf=-SAFE_OUTPUT_CLIP)
         values = np.clip(values, -SAFE_OUTPUT_CLIP, SAFE_OUTPUT_CLIP)
         return pd.Series(values, index=series.index)
+
+    def _node_type(self, node: str) -> str:
+        return self.node_types.get(node, "continuous")
+
+    def _node_cardinality(self, node: str) -> int:
+        return int(self.node_cardinalities.get(node, 2))
+
+    @staticmethod
+    def _stable_softmax(logits: np.ndarray) -> np.ndarray:
+        max_logits = np.max(logits, axis=1, keepdims=True)
+        exp_logits = np.exp(logits - max_logits)
+        return exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
 
     def _get_param(self, path: list, default_sampler: callable, node_type: str = None):
         """
@@ -131,30 +176,12 @@ class CausalDataGenerator:
                 self.graph.add_nodes_from(provided_nodes)
             self.graph.add_edges_from(provided_edges)
         else:
-            if graph_type == 'fork':
-                z_size = self.graph_params.get('z_size', 1)
-                z_nodes = [f'Z{i+1}' for i in range(z_size)]
-                self.graph.add_nodes_from(['X', 'Y'] + z_nodes)
-                for z in z_nodes:
-                    self.graph.add_edge(z, 'X')
-                    self.graph.add_edge(z, 'Y')
-            elif graph_type == 'chain':
-                z_size = self.graph_params.get('z_size', 1)
-                nodes = ['X'] + [f'Z{i+1}' for i in range(z_size)] + ['Y']
-                nx.add_path(self.graph, nodes)
-            elif graph_type == 'v_structure':
-                z_size = self.graph_params.get('z_size', 1)
-                z_nodes = [f'Z{i+1}' for i in range(z_size)]
-                self.graph.add_nodes_from(['X', 'Y'] + z_nodes)
-                for z in z_nodes:
-                    self.graph.add_edge('X', z)
-                    self.graph.add_edge('Y', z)
-            elif graph_type == 'custom':
+            if graph_type == 'custom':
                 nodes = self.graph_params.get('nodes', [])
                 edges = self.graph_params.get('edges', [])
                 self.graph = nx.DiGraph(edges)
                 self.graph.add_nodes_from(nodes)
-            else: # 'random'
+            elif graph_type == 'random':
                 n_nodes = self.graph_params.get('n_nodes', 5)
                 edge_prob = self.graph_params.get('edge_prob', 0.3)
                 nodes = [f'N{i}' for i in range(n_nodes)]
@@ -163,6 +190,10 @@ class CausalDataGenerator:
                     if self.rng_structure.random() < edge_prob:
                         # To ensure DAG, always add edges in one direction
                         self.graph.add_edge(u, v)
+            else:
+                raise ValueError(
+                    f"Unsupported graph type '{graph_type}'. Use 'custom' or 'random'."
+                )
 
         if not nx.is_directed_acyclic_graph(self.graph):
             raise ValueError("The specified graph is not a DAG.")
@@ -194,39 +225,81 @@ class CausalDataGenerator:
         ordered_graph.add_nodes_from(sorted_nodes)
         ordered_graph.add_edges_from(self.graph.edges)
         self.graph = ordered_graph
+        self.final_parametrization["nodes"] = {
+            node: {
+                "type": self._node_type(node),
+                "cardinality": self._node_cardinality(node),
+            }
+            for node in sorted_nodes
+        }
 
-        return {
+        result = {
             "data": self.data,
             "parametrization": self.final_parametrization,
             "dag": self.graph
         }
+        if self.simulation_params.get("store_ci_oracle", False):
+            max_cond_set_size = self.simulation_params.get("ci_oracle_max_cond_set", 2)
+            ci_oracle = self._build_ci_oracle(max_cond_set_size=max_cond_set_size)
+            result["ci_oracle"] = ci_oracle
+            self.final_parametrization["ci_oracle"] = ci_oracle
+
+        return result
 
     def _generate_node_data(self, node: str):
         """
-        Determines a node's type (binary or continuous) and dispatches to the
+        Determines a node's type (binary, continuous, or categorical) and dispatches to the
         appropriate generation function.
         """
         parents = list(self.graph.predecessors(node))
 
-        # First, determine the node's data type (binary or continuous).
-        # This can be hardcoded or will be randomly chosen based on binary_proportion.
+        # Determine node type from config or sample from proportions.
         binary_proportion = self.simulation_params.get('binary_proportion', 0.4)
+        categorical_proportion = self.simulation_params.get('categorical_proportion', 0.0)
+        continuous_proportion = max(0.0, 1.0 - binary_proportion - categorical_proportion)
+        prob_sum = binary_proportion + categorical_proportion + continuous_proportion
+        probs = np.array(
+            [binary_proportion, continuous_proportion, categorical_proportion],
+            dtype=float
+        )
+        probs = probs / (prob_sum if prob_sum > 0 else 1.0)
         node_type_str = self._get_param(
             ['node_params', node, 'type'],
-            lambda: self.rng_structure.choice(["binary", "continuous"], p=[binary_proportion, 1 - binary_proportion]),
+            lambda: self.rng_structure.choice(["binary", "continuous", "categorical"], p=probs),
             node_type='endogenous' if parents else 'exogenous'
         )
+        self.node_types[node] = node_type_str
 
-        if not parents:  # Exogenous node
+        if node_type_str == "categorical":
+            cardinality = self._get_param(
+                ['node_params', node, 'cardinality'],
+                lambda: int(self.rng_structure.choice([2, 3, 5, 10, 20])),
+                node_type='endogenous' if parents else 'exogenous'
+            )
+            self.node_cardinalities[node] = int(cardinality)
+        elif node_type_str == "binary":
+            self.node_cardinalities[node] = 2
+        else:
+            self.node_cardinalities[node] = 0
+
+        if not parents:
             if node_type_str == 'continuous':
                 self._generate_exogenous_continuous(node)
-            else:  # binary
+            elif node_type_str == 'binary':
                 self._generate_exogenous_binary(node)
-        else:  # Endogenous node
+            elif node_type_str == 'categorical':
+                self._generate_exogenous_categorical(node)
+            else:
+                raise ValueError(f"Unknown node type '{node_type_str}' for node '{node}'")
+        else:
             if node_type_str == 'continuous':
                 self._generate_endogenous_continuous(node, parents)
-            else:  # binary
+            elif node_type_str == 'binary':
                 self._generate_endogenous_binary(node, parents)
+            elif node_type_str == 'categorical':
+                self._generate_endogenous_categorical(node, parents)
+            else:
+                raise ValueError(f"Unknown node type '{node_type_str}' for node '{node}'")
 
     def _generate_exogenous_continuous(self, node: str):
         """Generates data for a continuous node with no parents."""
@@ -298,6 +371,23 @@ class CausalDataGenerator:
         )
         self.data[node] = self.rng_data.binomial(1, p, size=self.data.shape[0])
 
+    def _generate_exogenous_categorical(self, node: str):
+        """Generates data for a categorical exogenous node."""
+        n_samples = self.data.shape[0]
+        cardinality = self._node_cardinality(node)
+        probs = self._get_param(
+            ['node_params', node, 'distribution', 'probs'],
+            lambda: self.rng_structure.dirichlet(np.ones(cardinality)).tolist(),
+            node_type='exogenous'
+        )
+        probs = np.asarray(probs, dtype=float)
+        if probs.shape[0] != cardinality:
+            raise ValueError(
+                f"Categorical exogenous node '{node}' expects {cardinality} probabilities, got {probs.shape[0]}"
+            )
+        probs = probs / probs.sum()
+        self.data[node] = self.rng_data.choice(np.arange(cardinality), size=n_samples, p=probs)
+
     def _generate_endogenous_continuous(self, node: str, parents: list):
         """Generates data for a continuous node with parents."""
         base_value = self._apply_functional_form(node, parents)
@@ -311,6 +401,97 @@ class CausalDataGenerator:
         
         prob = expit(final_value)
         self.data[node] = self.rng_data.binomial(1, p=prob)
+
+    def _generate_endogenous_categorical(self, node: str, parents: list):
+        """Generates data for a multi-level categorical node with parent-driven probabilities."""
+        n_samples = self.data.shape[0]
+        cardinality = self._node_cardinality(node)
+        model_name = self._get_param(
+            ['node_params', node, 'categorical_model', 'name'],
+            lambda: 'logistic',
+            node_type='endogenous'
+        )
+
+        if model_name == "threshold":
+            scores = np.zeros(n_samples, dtype=float)
+            weights = self._get_param(
+                ['node_params', node, 'categorical_model', 'weights'],
+                lambda: {p: float(self.rng_structure.uniform(-1.0, 1.0)) for p in parents},
+                node_type='endogenous'
+            )
+            for parent in parents:
+                weight = float(weights.get(parent, 0.0)) if isinstance(weights, dict) else float(weights)
+                scores += weight * np.asarray(self.data[parent], dtype=float)
+
+            thresholds = self._get_param(
+                ['node_params', node, 'categorical_model', 'thresholds'],
+                lambda: np.quantile(scores, np.linspace(0, 1, cardinality + 1)[1:-1]).tolist(),
+                node_type='endogenous'
+            )
+            thresholds = np.asarray(thresholds, dtype=float)
+            if thresholds.shape[0] != max(0, cardinality - 1):
+                raise ValueError(
+                    f"Threshold model for '{node}' expects {cardinality - 1} thresholds, got {thresholds.shape[0]}"
+                )
+            self.data[node] = np.digitize(scores, bins=np.sort(thresholds), right=False)
+            return
+
+        if model_name != "logistic":
+            raise ValueError(f"Unknown categorical model for node '{node}': {model_name}")
+
+        intercepts = self._get_param(
+            ['node_params', node, 'categorical_model', 'intercepts'],
+            lambda: self.rng_structure.normal(0, 0.2, size=cardinality).tolist(),
+            node_type='endogenous'
+        )
+        logits = np.tile(np.asarray(intercepts, dtype=float), (n_samples, 1))
+        if logits.shape[1] != cardinality:
+            raise ValueError(
+                f"Categorical logistic model for '{node}' expects {cardinality} intercepts, got {logits.shape[1]}"
+            )
+
+        weights = self._get_param(
+            ['node_params', node, 'categorical_model', 'weights'],
+            lambda: {},
+            node_type='endogenous'
+        )
+        if not isinstance(weights, dict):
+            raise ValueError(f"'weights' for categorical node '{node}' must be a dictionary")
+
+        for parent in parents:
+            parent_type = self._node_type(parent)
+            parent_values = np.asarray(self.data[parent])
+            parent_weight = weights.get(parent)
+
+            if parent_type == "categorical":
+                parent_cardinality = self._node_cardinality(parent)
+                if parent_weight is None:
+                    parent_weight = self.rng_structure.normal(
+                        0, 0.25, size=(parent_cardinality, cardinality)
+                    )
+                parent_weight = np.asarray(parent_weight, dtype=float)
+                if parent_weight.shape != (parent_cardinality, cardinality):
+                    raise ValueError(
+                        f"Weights for categorical parent '{parent}' must have shape "
+                        f"({parent_cardinality}, {cardinality}), got {parent_weight.shape}"
+                    )
+                parent_idx = np.clip(parent_values.astype(int), 0, parent_cardinality - 1)
+                logits += parent_weight[parent_idx]
+            else:
+                if parent_weight is None:
+                    parent_weight = self.rng_structure.normal(0, 0.5, size=cardinality)
+                parent_weight = np.asarray(parent_weight, dtype=float)
+                if parent_weight.shape != (cardinality,):
+                    raise ValueError(
+                        f"Weights for parent '{parent}' must have shape ({cardinality},), got {parent_weight.shape}"
+                    )
+                logits += np.outer(parent_values.astype(float), parent_weight)
+
+        probs = self._stable_softmax(logits)
+        cumulative = np.cumsum(probs, axis=1)
+        draws = self.rng_data.random(n_samples)[:, None]
+        categories = (draws > cumulative).sum(axis=1)
+        self.data[node] = categories.astype(int)
 
     def _apply_functional_form(self, node: str, parents: list):
         """Computes a node's base value from its parents' data."""
@@ -371,6 +552,34 @@ class CausalDataGenerator:
             for p in parents:
                 interaction_term *= self.data[p].clip(-SAFE_PARENT_CLIP, SAFE_PARENT_CLIP)
             return weights.get('interaction', 1.0) * interaction_term
+        elif form_name == 'stratum_means':
+            strata_means = self._get_param(
+                ['node_params', node, 'functional_form', 'strata_means'],
+                lambda: {},
+                node_type='endogenous'
+            )
+            default_mean = self._get_param(
+                ['node_params', node, 'functional_form', 'default_mean'],
+                lambda: 0.0,
+                node_type='endogenous'
+            )
+            if not isinstance(strata_means, dict):
+                raise ValueError(f"'strata_means' for node '{node}' must be a dictionary")
+
+            parent_df = self.data[parents]
+            output = np.full(parent_df.shape[0], float(default_mean))
+            for idx, row in parent_df.iterrows():
+                key = "|".join([f"{p}={int(row[p])}" for p in parents])
+                if key not in strata_means:
+                    strata_means[key] = float(self.rng_structure.normal(0, 1))
+                output[idx] = float(strata_means[key])
+
+            self._get_param(
+                ['node_params', node, 'functional_form', 'strata_means'],
+                lambda: strata_means,
+                node_type='endogenous'
+            )
+            return pd.Series(output, index=self.data.index)
         else:
             raise ValueError(f"Unknown functional form for node '{node}': {form_name}")
 
@@ -497,16 +706,57 @@ class CausalDataGenerator:
             else:
                 raise ValueError(f"Unknown multiplicative noise dist: {dist}")
         elif noise_name == 'heteroskedastic':
-            func_str = self._get_param(
+            func_spec = self._get_param(
                 ['node_params', node, 'noise_model', 'func'], 
-                lambda: 'lambda p: 0.5 * np.abs(p.iloc[:, 0])',
+                lambda: 'abs_first_parent',
                 node_type='endogenous'
             )
-            # Security warning: eval is used here. Only use with trusted configurations.
-            noise_func = eval(func_str) 
+
+            if callable(func_spec):
+                noise_func = func_spec
+            else:
+                func_name = LEGACY_HETEROSKEDASTIC_FUNC_ALIASES.get(str(func_spec), str(func_spec))
+                noise_func = HETEROSKEDASTIC_FN_REGISTRY.get(func_name)
+                if noise_func is None:
+                    supported = ", ".join(sorted(HETEROSKEDASTIC_FN_REGISTRY.keys()))
+                    raise ValueError(
+                        f"Unsupported heteroskedastic func '{func_spec}'. "
+                        f"Use one of: {supported}"
+                    )
+
             parent_data = self.data[parents]
             noise_std = noise_func(parent_data)
             noise = self.rng_data.normal(0, 1, size=n_samples) * noise_std
             return base_value + noise
         
         return base_value
+
+    def _build_ci_oracle(self, max_cond_set_size: int = 2) -> list:
+        """
+        Builds a d-separation oracle from the generated DAG.
+
+        Returns:
+            list: Records with keys x, y, conditioning_set, is_independent.
+        """
+        nodes = list(self.graph.nodes())
+        oracle = []
+        max_k = max(0, int(max_cond_set_size))
+
+        for i, x in enumerate(nodes):
+            for y in nodes[i + 1:]:
+                remaining = [n for n in nodes if n not in (x, y)]
+                for k in range(0, min(max_k, len(remaining)) + 1):
+                    for cond_set in itertools.combinations(remaining, k):
+                        is_independent = bool(
+                            is_d_separator(self.graph, {x}, {y}, set(cond_set))
+                        )
+                        oracle.append(
+                            {
+                                "x": x,
+                                "y": y,
+                                "conditioning_set": list(cond_set),
+                                "is_independent": is_independent,
+                            }
+                        )
+
+        return oracle
