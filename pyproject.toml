@@ -24,6 +24,10 @@ simulation-generate = "causal_simulator.cli:main"
 dev = [
   "pytest>=8.0"
 ]
+docs = [
+  "sphinx>=7.2,<8",
+  "furo>=2024.8.6"
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
