@@ -18,14 +18,18 @@ dependencies = [
 ]
 
 [project.scripts]
-simulation-generate = "causal_simulator.causal_simulator.cli:main"
+simulation-generate = "causal_simulator.cli:main"
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0"
 ]
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
+where = ["src"]
 include = [
   "causal_simulator*"
 ]
@@ -35,4 +39,3 @@ exclude = [
   "plots*",
   "results*",
 ]
-
