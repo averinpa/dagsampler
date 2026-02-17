@@ -1,0 +1,74 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+
+# Distribution / packaging
+.Python
+build/
+dist/
+downloads/
+.eggs/
+*.egg-info/
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Type checkers
+.mypy_cache/
+.pyre/
+.pytype/
+.pyright/
+
+# Lint tool caches
+.ruff_cache/
+.pylint.d/
+
+# Translations
+*.mo
+*.pot
+
+# Sphinx documentation
+docs/_build/
+doc/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# Environments
+.envs/
+.env.*.local
+.venv/
+.python-version
+venv/
+ENV/
+env/
+.conda/
+.conda_env/
+.mamba/
+.micromamba/
+.pixi/
+conda-meta/
+
+envs/
+notebooks/
+plots/
+results/
+runner/
+instruction.md
+test.py
