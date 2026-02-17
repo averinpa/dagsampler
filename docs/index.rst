@@ -8,5 +8,7 @@ Minimal Python package for generating synthetic data from causal DAGs.
    :caption: Contents
 
    overview
+   formulations
+   config_examples
    usage
    api
