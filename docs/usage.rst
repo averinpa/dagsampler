@@ -8,7 +8,7 @@ Install
 
    uv venv
    source .venv/bin/activate
-   uv pip install -e .
+   uv pip install "dagsampler @ git+https://github.com/averinpa/dagsampler.git"
 
 Python API
 ----------
