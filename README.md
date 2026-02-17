@@ -2,7 +2,7 @@
 
 Minimal Python package for generating synthetic data from causal DAGs.
 
-Documentation: https://averinpa.github.io/dagsampler/
+[Documentation](https://averinpa.github.io/dagsampler/)
 
 ## What it provides
 
@@ -22,7 +22,7 @@ Documentation: https://averinpa.github.io/dagsampler/
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install -e .
+uv pip install "dagsampler @ git+https://github.com/averinpa/dagsampler.git"
 ```
 
 ## Quick start (Python API)
