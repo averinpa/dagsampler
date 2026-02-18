@@ -44,6 +44,11 @@ faithfulness issues, configure:
 This samples random structural weights from:
 - `[-1.5, -0.1] U [0.1, 1.5]`
 
+By default, categorical parents are not allowed with metric functional forms
+(`linear`, `polynomial`, `interaction`). Set:
+- `"categorical_parent_metric_form_policy": "stratum_means"`
+to auto-redirect those cases to `stratum_means`.
+
 ## Quick start (Python API)
 
 ```python

@@ -180,6 +180,10 @@ where :math:`g_{jpk}` depends on parent type:
 
    X_j = \mathrm{digitize}(s_j; \tau_{j1}, \dots, \tau_{j(K-1)})
 
+If thresholds are not provided, defaults are fixed from a theoretical Gaussian
+quantile grid (optionally shifted/scaled by ``threshold_loc`` and
+``threshold_scale``), not from realized sample quantiles.
+
 Compatibility Matrix
 --------------------
 
@@ -206,6 +210,25 @@ Compatibility Matrix
 
 For random structural weights, additional controls are:
 ``random_weight_low``, ``random_weight_high``, and ``random_weight_min_abs``.
+The same ``random_weight_min_abs`` exclusion is applied to auto-sampled
+categorical logistic weights as well.
+
+Categorical parents in metric forms
+-----------------------------------
+
+Using categorical parents with ``linear``, ``polynomial``, or ``interaction``
+is blocked by default (``categorical_parent_metric_form_policy = "error"``),
+because treating category codes as metric values can distort the intended DGP.
+
+Set ``categorical_parent_metric_form_policy = "stratum_means"`` to auto-redirect
+such cases to ``stratum_means``.
+
+Stratum means reproducibility
+-----------------------------
+
+For ``stratum_means`` with multiple categorical parents, all strata are
+pre-enumerated and assigned means upfront, ensuring stable DGP parameters even
+for rare/unseen strata in a particular sample.
 
 CI Oracle (Ground Truth)
 ------------------------

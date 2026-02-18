@@ -72,6 +72,35 @@ Random weights with near-zero exclusion (faithfulness-oriented)
 In this setup, omitted linear weights are sampled from
 ``[-1.5, -0.1] U [0.1, 1.5]``.
 
+Categorical parent with metric form policy override
+---------------------------------------------------
+
+By default, categorical parents with ``linear``/``polynomial``/``interaction``
+raise an error. To auto-redirect to ``stratum_means``:
+
+.. code-block:: json
+
+   {
+     "simulation_params": {
+       "n_samples": 300,
+       "seed": 303,
+       "categorical_parent_metric_form_policy": "stratum_means"
+     },
+     "graph_params": {
+       "type": "custom",
+       "nodes": ["C", "Y"],
+       "edges": [["C", "Y"]]
+     },
+     "node_params": {
+       "C": { "type": "categorical", "cardinality": 4 },
+       "Y": {
+         "type": "continuous",
+         "functional_form": { "name": "linear" },
+         "noise_model": { "name": "additive", "dist": "gaussian", "std": 0.2 }
+       }
+     }
+   }
+
 Exogenous node distributions
 ----------------------------
 
@@ -240,6 +269,24 @@ Continuous to categorical (threshold)
            "name": "threshold",
            "weights": { "X": 1.0 },
            "thresholds": [-1.0, -0.2, 0.4, 1.1]
+         }
+       }
+     }
+   }
+
+To use fixed theoretical threshold placement:
+
+.. code-block:: json
+
+   {
+     "node_params": {
+       "C": {
+         "type": "categorical",
+         "cardinality": 5,
+         "categorical_model": {
+           "name": "threshold",
+           "threshold_loc": 0.0,
+           "threshold_scale": 1.0
          }
        }
      }

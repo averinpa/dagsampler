@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 from scipy.special import expit
+from scipy.stats import norm
 import itertools
 import copy
 from networkx.algorithms.d_separation import is_d_separator
@@ -146,6 +147,30 @@ class CausalDataGenerator:
         if self.rng_structure.random() < (left_len / total):
             return float(self.rng_structure.uniform(left_low, left_high))
         return float(self.rng_structure.uniform(right_low, right_high))
+
+    def _sample_logistic_weight_array(self, shape, std: float) -> np.ndarray:
+        """
+        Samples logistic-model weights with optional near-zero exclusion.
+
+        If random_weight_min_abs == 0, uses N(0, std^2).
+        If random_weight_min_abs > 0, resamples values with |w| < min_abs.
+        """
+        min_abs = float(self.simulation_params.get("random_weight_min_abs", 0.0))
+        arr = self.rng_structure.normal(0.0, std, size=shape)
+        if min_abs <= 0:
+            return arr
+
+        mask = np.abs(arr) < min_abs
+        attempts = 0
+        while np.any(mask):
+            attempts += 1
+            if attempts > 100:
+                # Guaranteed fallback under strict exclusion constraints
+                arr[mask] = np.array([self._sample_random_weight() for _ in range(mask.sum())], dtype=float)
+                break
+            arr[mask] = self.rng_structure.normal(0.0, std, size=mask.sum())
+            mask = np.abs(arr) < min_abs
+        return arr
 
     def _get_param(self, path: list, default_sampler: callable, node_type: str = None):
         """
@@ -454,7 +479,7 @@ class CausalDataGenerator:
             scores = np.zeros(n_samples, dtype=float)
             weights = self._get_param(
                 ['node_params', node, 'categorical_model', 'weights'],
-                lambda: {p: float(self.rng_structure.uniform(-1.0, 1.0)) for p in parents},
+                lambda: {p: self._sample_random_weight() for p in parents},
                 node_type='endogenous'
             )
             for parent in parents:
@@ -463,7 +488,19 @@ class CausalDataGenerator:
 
             thresholds = self._get_param(
                 ['node_params', node, 'categorical_model', 'thresholds'],
-                lambda: np.quantile(scores, np.linspace(0, 1, cardinality + 1)[1:-1]).tolist(),
+                lambda: (
+                    float(self._get_param(
+                        ['node_params', node, 'categorical_model', 'threshold_loc'],
+                        lambda: 0.0,
+                        node_type='endogenous'
+                    ))
+                    + float(self._get_param(
+                        ['node_params', node, 'categorical_model', 'threshold_scale'],
+                        lambda: 1.0,
+                        node_type='endogenous'
+                    ))
+                    * norm.ppf(np.linspace(0, 1, cardinality + 1)[1:-1])
+                ).tolist(),
                 node_type='endogenous'
             )
             thresholds = np.asarray(thresholds, dtype=float)
@@ -496,6 +533,7 @@ class CausalDataGenerator:
         if not isinstance(weights, dict):
             raise ValueError(f"'weights' for categorical node '{node}' must be a dictionary")
 
+        completed_weights = {}
         for parent in parents:
             parent_type = self._node_type(parent)
             parent_values = np.asarray(self.data[parent])
@@ -504,8 +542,9 @@ class CausalDataGenerator:
             if parent_type == "categorical":
                 parent_cardinality = self._node_cardinality(parent)
                 if parent_weight is None:
-                    parent_weight = self.rng_structure.normal(
-                        0, 0.25, size=(parent_cardinality, cardinality)
+                    parent_weight = self._sample_logistic_weight_array(
+                        shape=(parent_cardinality, cardinality),
+                        std=0.25
                     )
                 parent_weight = np.asarray(parent_weight, dtype=float)
                 if parent_weight.shape != (parent_cardinality, cardinality):
@@ -515,15 +554,28 @@ class CausalDataGenerator:
                     )
                 parent_idx = np.clip(parent_values.astype(int), 0, parent_cardinality - 1)
                 logits += parent_weight[parent_idx]
+                completed_weights[parent] = parent_weight.tolist()
             else:
                 if parent_weight is None:
-                    parent_weight = self.rng_structure.normal(0, 0.5, size=cardinality)
+                    parent_weight = self._sample_logistic_weight_array(
+                        shape=(cardinality,),
+                        std=0.5
+                    )
                 parent_weight = np.asarray(parent_weight, dtype=float)
                 if parent_weight.shape != (cardinality,):
                     raise ValueError(
                         f"Weights for parent '{parent}' must have shape ({cardinality},), got {parent_weight.shape}"
                     )
                 logits += np.outer(parent_values.astype(float), parent_weight)
+                completed_weights[parent] = parent_weight.tolist()
+
+        param_storage = (
+            self.final_parametrization
+            .setdefault('node_params', {})
+            .setdefault(node, {})
+            .setdefault('categorical_model', {})
+        )
+        param_storage['weights'] = completed_weights
 
         probs = self._stable_softmax(logits)
         cumulative = np.cumsum(probs, axis=1)
@@ -538,6 +590,22 @@ class CausalDataGenerator:
             lambda: self.rng_structure.choice(['linear', 'polynomial', 'interaction']),
             node_type='endogenous'
         )
+        categorical_parents = [p for p in parents if self._node_type(p) == "categorical"]
+        if form_name in {"linear", "polynomial", "interaction"} and categorical_parents:
+            policy = str(self.simulation_params.get("categorical_parent_metric_form_policy", "error")).lower()
+            if policy == "stratum_means":
+                form_name = "stratum_means"
+            elif policy == "error":
+                raise ValueError(
+                    f"Node '{node}' uses metric functional form '{form_name}' with categorical parent(s) "
+                    f"{categorical_parents}. Use 'stratum_means' or set "
+                    f"simulation_params.categorical_parent_metric_form_policy='stratum_means'."
+                )
+            else:
+                raise ValueError(
+                    f"Unknown categorical_parent_metric_form_policy='{policy}'. "
+                    "Use 'error' or 'stratum_means'."
+                )
         
         # This function will ensure that for any parameter (like weights or degrees),
         # we get a dictionary with a value for every parent.
@@ -563,7 +631,7 @@ class CausalDataGenerator:
                             param_copy[p] = sampled_values[p]
                         elif isinstance(sampled_values, dict):
                              # if the sampler returns a dict but not for the specific parent, sample again
-                             param_copy[p] = self.rng_structure.uniform(-1.5, 1.5)
+                             param_copy[p] = self._sample_random_weight()
                         else:
                              param_copy[p] = sampled_values
 
@@ -603,20 +671,37 @@ class CausalDataGenerator:
             )
             if not isinstance(strata_means, dict):
                 raise ValueError(f"'strata_means' for node '{node}' must be a dictionary")
+            if not parents:
+                raise ValueError(f"'stratum_means' requires at least one parent for node '{node}'")
+            non_categorical_parents = [p for p in parents if self._node_type(p) != "categorical"]
+            if non_categorical_parents:
+                raise ValueError(
+                    f"'stratum_means' requires categorical parents only. "
+                    f"Node '{node}' has non-categorical parents: {non_categorical_parents}"
+                )
+
+            completed_strata_means = {k: float(v) for k, v in strata_means.items()}
+            parent_cardinalities = [self._node_cardinality(p) for p in parents]
+            for combo in itertools.product(*[range(c) for c in parent_cardinalities]):
+                key = "|".join([f"{p}={int(v)}" for p, v in zip(parents, combo)])
+                if key not in completed_strata_means:
+                    completed_strata_means[key] = float(self.rng_structure.normal(0, 1))
 
             parent_df = self.data[parents]
-            output = np.full(parent_df.shape[0], float(default_mean))
-            for idx, row in parent_df.iterrows():
-                key = "|".join([f"{p}={int(row[p])}" for p in parents])
-                if key not in strata_means:
-                    strata_means[key] = float(self.rng_structure.normal(0, 1))
-                output[idx] = float(strata_means[key])
+            output = np.full(parent_df.shape[0], float(default_mean), dtype=float)
+            parent_values = parent_df.to_numpy(dtype=int)
+            keys = [
+                "|".join([f"{p}={int(v)}" for p, v in zip(parents, row)])
+                for row in parent_values
+            ]
+            output = np.array([completed_strata_means.get(k, float(default_mean)) for k in keys], dtype=float)
 
-            self._get_param(
-                ['node_params', node, 'functional_form', 'strata_means'],
-                lambda: strata_means,
-                node_type='endogenous'
-            )
+            (
+                self.final_parametrization
+                .setdefault('node_params', {})
+                .setdefault(node, {})
+                .setdefault('functional_form', {})
+            )['strata_means'] = completed_strata_means
             return pd.Series(output, index=self.data.index)
         else:
             raise ValueError(f"Unknown functional form for node '{node}': {form_name}")
