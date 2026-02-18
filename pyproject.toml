@@ -22,7 +22,8 @@ dagsampler-generate = "causal_simulator.cli:main"
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.0"
+  "pytest>=8.0",
+  "ipykernel>=6.29.0"
 ]
 docs = [
   "sphinx>=7.2,<8",
