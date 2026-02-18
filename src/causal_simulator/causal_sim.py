@@ -596,13 +596,6 @@ class CausalDataGenerator:
         if form_name in {"linear", "polynomial", "interaction"} and categorical_parents:
             policy = str(self.simulation_params.get("categorical_parent_metric_form_policy", "error")).lower()
             if policy == "stratum_means":
-                if len(categorical_parents) != len(parents):
-                    non_categorical_parents = [p for p in parents if self._node_type(p) != "categorical"]
-                    raise ValueError(
-                        f"Node '{node}' has mixed parent types. "
-                        f"categorical_parent_metric_form_policy='stratum_means' requires all parents "
-                        f"to be categorical, but got non-categorical parents: {non_categorical_parents}"
-                    )
                 form_name = "stratum_means"
             elif policy == "error":
                 raise ValueError(
@@ -682,35 +675,57 @@ class CausalDataGenerator:
                 raise ValueError(f"'strata_means' for node '{node}' must be a dictionary")
             if not parents:
                 raise ValueError(f"'stratum_means' requires at least one parent for node '{node}'")
-            non_categorical_parents = [p for p in parents if self._node_type(p) != "categorical"]
-            if non_categorical_parents:
+            categorical_parents = [p for p in parents if self._node_type(p) == "categorical"]
+            metric_parents = [p for p in parents if self._node_type(p) != "categorical"]
+            if not categorical_parents:
                 raise ValueError(
-                    f"'stratum_means' requires categorical parents only. "
-                    f"Node '{node}' has non-categorical parents: {non_categorical_parents}"
+                    f"'stratum_means' requires at least one categorical parent. "
+                    f"Node '{node}' has parents: {parents}"
                 )
 
             completed_strata_means = {k: float(v) for k, v in strata_means.items()}
-            parent_cardinalities = [self._node_cardinality(p) for p in parents]
+            parent_cardinalities = [self._node_cardinality(p) for p in categorical_parents]
             for combo in itertools.product(*[range(c) for c in parent_cardinalities]):
-                key = "|".join([f"{p}={int(v)}" for p, v in zip(parents, combo)])
+                key = "|".join([f"{p}={int(v)}" for p, v in zip(categorical_parents, combo)])
                 if key not in completed_strata_means:
                     completed_strata_means[key] = float(self.rng_structure.normal(0, 1))
 
-            parent_df = self.data[parents]
-            output = np.full(parent_df.shape[0], float(default_mean), dtype=float)
-            parent_values = parent_df.to_numpy(dtype=int)
+            metric_weights = self._get_param(
+                ['node_params', node, 'functional_form', 'metric_weights'],
+                lambda: {p: self._sample_random_weight() for p in metric_parents},
+                node_type='endogenous'
+            )
+            if isinstance(metric_weights, (float, int, np.floating, np.integer)):
+                metric_weights = {p: float(metric_weights) for p in metric_parents}
+            elif not isinstance(metric_weights, dict):
+                raise ValueError(f"'metric_weights' for node '{node}' must be a number or dictionary")
+            else:
+                metric_weights = {**{p: self._sample_random_weight() for p in metric_parents}, **metric_weights}
+
+            cat_parent_df = self.data[categorical_parents]
+            parent_values = cat_parent_df.to_numpy(dtype=int)
             keys = [
-                "|".join([f"{p}={int(v)}" for p, v in zip(parents, row)])
+                "|".join([f"{p}={int(v)}" for p, v in zip(categorical_parents, row)])
                 for row in parent_values
             ]
-            output = np.array([completed_strata_means.get(k, float(default_mean)) for k in keys], dtype=float)
+            strata_component = np.array(
+                [completed_strata_means.get(k, float(default_mean)) for k in keys],
+                dtype=float
+            )
 
-            (
+            metric_component = np.zeros_like(strata_component)
+            for p in metric_parents:
+                metric_component += float(metric_weights[p]) * np.asarray(self.data[p], dtype=float)
+            output = strata_component + metric_component
+
+            ff_store = (
                 self.final_parametrization
                 .setdefault('node_params', {})
                 .setdefault(node, {})
                 .setdefault('functional_form', {})
-            )['strata_means'] = completed_strata_means
+            )
+            ff_store['strata_means'] = completed_strata_means
+            ff_store['metric_weights'] = metric_weights
             return pd.Series(output, index=self.data.index)
         else:
             raise ValueError(f"Unknown functional form for node '{node}': {form_name}")

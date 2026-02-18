@@ -220,10 +220,10 @@ def test_metric_functional_form_can_redirect_to_stratum_means():
     assert len(strata_means) == 4
 
 
-def test_mixed_parent_redirect_policy_raises_clear_error():
+def test_mixed_parent_redirect_policy_supports_stratum_plus_metric_term():
     config = {
         "simulation_params": {
-            "n_samples": 30,
+            "n_samples": 60,
             "seed_structure": 1,
             "seed_data": 2,
             "categorical_parent_metric_form_policy": "stratum_means",
@@ -243,7 +243,31 @@ def test_mixed_parent_redirect_policy_raises_clear_error():
             },
         },
     }
-    with pytest.raises(ValueError, match="requires all parents to be categorical"):
+    result = CausalDataGenerator(config).simulate()
+    ff = result["parametrization"]["node_params"]["Y"]["functional_form"]
+    assert "strata_means" in ff
+    assert "metric_weights" in ff
+    assert "X" in ff["metric_weights"]
+
+
+def test_stratum_means_requires_at_least_one_categorical_parent():
+    config = {
+        "simulation_params": {"n_samples": 20, "seed_structure": 11, "seed_data": 12},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Y"],
+            "edges": [["X", "Y"]],
+        },
+        "node_params": {
+            "X": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 1.0}},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "stratum_means"},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 0.1},
+            },
+        },
+    }
+    with pytest.raises(ValueError, match="at least one categorical parent"):
         CausalDataGenerator(config).simulate()
 
 
@@ -348,3 +372,53 @@ def test_stratum_means_preenumerates_all_combinations():
     result = CausalDataGenerator(config).simulate()
     strata_means = result["parametrization"]["node_params"]["Y"]["functional_form"]["strata_means"]
     assert len(strata_means) == 6
+
+
+def test_random_graph_extreme_sparsity_produces_no_edges():
+    config = {
+        "simulation_params": {"n_samples": 25, "seed_structure": 5, "seed_data": 6},
+        "graph_params": {"type": "random", "n_nodes": 7, "edge_prob": 0.0},
+    }
+    result = CausalDataGenerator(config).simulate()
+    assert len(list(result["dag"].edges())) == 0
+    assert result["data"].shape == (25, 7)
+
+
+def test_high_cardinality_categorical_node_generation():
+    config = {
+        "simulation_params": {"n_samples": 400, "seed_structure": 15, "seed_data": 16},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["C"],
+            "edges": [],
+        },
+        "node_params": {
+            "C": {"type": "categorical", "cardinality": 20},
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    vals = result["data"]["C"]
+    assert vals.min() >= 0
+    assert vals.max() <= 19
+    assert len(vals.unique()) >= 10
+
+
+def test_imbalanced_categorical_proportions_are_respected():
+    config = {
+        "simulation_params": {"n_samples": 1200, "seed_structure": 31, "seed_data": 32},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["C"],
+            "edges": [],
+        },
+        "node_params": {
+            "C": {
+                "type": "categorical",
+                "cardinality": 3,
+                "distribution": {"probs": [0.95, 0.04, 0.01]},
+            }
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    p0 = (result["data"]["C"] == 0).mean()
+    assert p0 > 0.9

@@ -227,6 +227,16 @@ because treating category codes as metric values can distort the intended DGP.
 Set ``categorical_parent_metric_form_policy = "stratum_means"`` to auto-redirect
 such cases to ``stratum_means``.
 
+For mixed parents (categorical + continuous/binary), redirected ``stratum_means``
+uses:
+
+.. math::
+
+   f_j = \mu_{\text{cat-stratum}} + \sum_{p \in \text{metric parents}} w_p X_p
+
+where categorical parents select the stratum mean and metric parents contribute
+an additive linear term.
+
 Stratum means reproducibility
 -----------------------------
 

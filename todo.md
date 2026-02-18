@@ -4,11 +4,7 @@
 
 ### High priority
 
-- **Mixed-parent nodes unhandled for `policy='stratum_means'`**: When a node has both categorical and continuous parents and `categorical_parent_metric_form_policy='stratum_means'` is set, `_apply_functional_form` redirects to `stratum_means`, which then raises an error because it requires all parents to be categorical. Fix: either (a) support mixed parents in `stratum_means` by adding a linear term over continuous parents on top of the categorical stratum mean; or (b) make the policy redirect check whether all parents are categorical first and raise a clear error if not.
-
-### Medium priority
-
-- **Threshold default cut-points may produce imbalanced classes**: `threshold_loc` and `threshold_scale` default to fixed constants `0.0` and `1.0`, placing cut-points at N(0,1) quantiles. If the actual score distribution has a different scale, classes will be heavily imbalanced. Fix: sample `threshold_scale` from `rng_structure` (e.g. uniform over a reasonable range), or derive it from the parent weight magnitudes.
+- **Mixed-parent nodes not supported**: A continuous/binary child with both categorical and continuous parents cannot be generated — `stratum_means` requires all-categorical parents, and metric forms (`linear`, `polynomial`, `interaction`) are blocked when any parent is categorical. The error message is now clear, but the case is simply unsupported. Fix: support mixed parents in `stratum_means` by computing a linear term over continuous parents and adding it to the categorical stratum mean, i.e. `output = stratum_mean[cat_key] + Σ w_p * x_p` for continuous parents.
 
 ### Low priority
 

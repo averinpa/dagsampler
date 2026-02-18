@@ -76,7 +76,8 @@ Categorical parent with metric form policy override
 ---------------------------------------------------
 
 By default, categorical parents with ``linear``/``polynomial``/``interaction``
-raise an error. To auto-redirect to ``stratum_means``:
+raise an error. To auto-redirect to ``stratum_means`` (including mixed-parent
+cases), use:
 
 .. code-block:: json
 
