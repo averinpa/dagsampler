@@ -1,47 +1,31 @@
-## Q2: Extend Simulator + Implementation (May – Jul 2026)
+# Simulator TODO
 
-**Objective:** Extend the existing causal simulator (`/Users/pavelaverin/Projects/simulation`) into a proper Python package with mixed-type support. Implement all CI tests. Run preliminary experiments to validate the setup.
+## Open Bugs
 
-**Note:** The core simulator already exists with DAG generation, continuous + binary data, multiple functional forms/noise models, config-driven experiments, and PC algorithm integration. Weeks 13–15 extend it rather than building from scratch.
+### High priority
 
-### Week 13 (May 11–17) — Extend simulator: multi-level categorical variables
+- **Mixed-parent nodes unhandled for `policy='stratum_means'`**: When a node has both categorical and continuous parents and `categorical_parent_metric_form_policy='stratum_means'` is set, `_apply_functional_form` redirects to `stratum_means`, which then raises an error because it requires all parents to be categorical. Fix: either (a) support mixed parents in `stratum_means` by adding a linear term over continuous parents on top of the categorical stratum mean; or (b) make the policy redirect check whether all parents are categorical first and raise a clear error if not.
 
-**DO**
-- Add categorical variables with configurable cardinality (2, 3, 5, 10, 20 levels)
-- Implement logistic structural equations for categorical nodes (parents determine category probabilities)
-- Add cross-type mechanisms:
-  - Continuous → categorical (threshold-based)
-  - Categorical → continuous (stratum-specific means)
-- Add ground truth CI relation storage (oracle for Type I / power evaluation)
+### Medium priority
 
-**OUTPUT**
-- Extended simulator with full mixed-type support
+- **Threshold default cut-points may produce imbalanced classes**: `threshold_loc` and `threshold_scale` default to fixed constants `0.0` and `1.0`, placing cut-points at N(0,1) quantiles. If the actual score distribution has a different scale, classes will be heavily imbalanced. Fix: sample `threshold_scale` from `rng_structure` (e.g. uniform over a reasonable range), or derive it from the parent weight magnitudes.
+
+### Low priority
+
+- **No interaction terms in categorical logistic model**: Logits are a sum of individual parent contributions — no cross-parent interaction terms. Consider adding an `interaction` option to the categorical logistic model.
 
 ---
 
-### Week 14 (May 18–24) — Package hardening and cleanup
+## Planned Work
 
-**DO**
-- Fix `eval()` security issue — replace with function registry
-- Add docstrings and type hints to all public classes/methods
-- Add comprehensive pytest suite (noise models, graph generation, edge cases, mixed types)
-- Rename package if needed (more distinctive than `causal_simulator`)
-- Clean up pyproject.toml: proper metadata, versioning, dependencies
+### Hardening and cleanup
 
-**OUTPUT**
-- Publication-ready Python package
+- Add docstrings and type hints to all public classes and methods
+- Add comprehensive pytest suite covering: noise models, graph generation, mixed-type edge cases, high cardinality, extreme sparsity, imbalanced categories
 
----
+### Validation
 
-### Week 15 (May 25–31) — Validation of extended simulator
-
-**DO**
-- Validate: recover known CI relations from generated mixed-type data
+- Validate that known CI relations are recoverable from generated mixed-type data
 - Sanity-check marginal distributions, cross-type dependencies, categorical proportions
-- Test edge cases: high cardinality, extreme sparsity, imbalanced categories
 - Verify backward compatibility: existing experiment configs still work
-
-**OUTPUT**
-- Validation notebook with diagnostic plots
-
----
+- Produce validation notebook with diagnostic plots

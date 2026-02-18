@@ -180,9 +180,13 @@ where :math:`g_{jpk}` depends on parent type:
 
    X_j = \mathrm{digitize}(s_j; \tau_{j1}, \dots, \tau_{j(K-1)})
 
-If thresholds are not provided, defaults are fixed from a theoretical Gaussian
-quantile grid (optionally shifted/scaled by ``threshold_loc`` and
-``threshold_scale``), not from realized sample quantiles.
+If thresholds are not provided, defaults are set from a theoretical Gaussian
+quantile grid, not from realized sample quantiles. By default:
+
+* ``threshold_loc = 0.0``
+* ``threshold_scale`` is sampled from ``Uniform(0.5, 2.0)``
+
+You can override both explicitly in config.
 
 Compatibility Matrix
 --------------------

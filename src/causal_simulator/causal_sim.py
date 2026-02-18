@@ -1,11 +1,13 @@
-import numpy as np
-import pandas as pd
-import networkx as nx
-from scipy.special import expit
-from scipy.stats import norm
 import itertools
 import copy
+from typing import Any
+
+import networkx as nx
+import numpy as np
+import pandas as pd
 from networkx.algorithms.d_separation import is_d_separator
+from scipy.special import expit
+from scipy.stats import norm
 
 # Safety guards to avoid exploding values that can cause Inf/NaN
 SAFE_PARENT_CLIP = 1e3
@@ -51,7 +53,7 @@ class CausalDataGenerator:
     random parameter generation and hardcoded parameters for reproducible experiments.
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict[str, Any]):
         """
         Initializes the simulator with a configuration object.
 
@@ -268,7 +270,7 @@ class CausalDataGenerator:
 
     # --- Data Simulation Engine ---
 
-    def simulate(self) -> dict:
+    def simulate(self) -> dict[str, Any]:
         """Main public method to run the full simulation."""
         self._create_graph()
 
@@ -496,7 +498,7 @@ class CausalDataGenerator:
                     ))
                     + float(self._get_param(
                         ['node_params', node, 'categorical_model', 'threshold_scale'],
-                        lambda: 1.0,
+                        lambda: float(self.rng_structure.uniform(0.5, 2.0)),
                         node_type='endogenous'
                     ))
                     * norm.ppf(np.linspace(0, 1, cardinality + 1)[1:-1])
@@ -594,6 +596,13 @@ class CausalDataGenerator:
         if form_name in {"linear", "polynomial", "interaction"} and categorical_parents:
             policy = str(self.simulation_params.get("categorical_parent_metric_form_policy", "error")).lower()
             if policy == "stratum_means":
+                if len(categorical_parents) != len(parents):
+                    non_categorical_parents = [p for p in parents if self._node_type(p) != "categorical"]
+                    raise ValueError(
+                        f"Node '{node}' has mixed parent types. "
+                        f"categorical_parent_metric_form_policy='stratum_means' requires all parents "
+                        f"to be categorical, but got non-categorical parents: {non_categorical_parents}"
+                    )
                 form_name = "stratum_means"
             elif policy == "error":
                 raise ValueError(

@@ -220,6 +220,33 @@ def test_metric_functional_form_can_redirect_to_stratum_means():
     assert len(strata_means) == 4
 
 
+def test_mixed_parent_redirect_policy_raises_clear_error():
+    config = {
+        "simulation_params": {
+            "n_samples": 30,
+            "seed_structure": 1,
+            "seed_data": 2,
+            "categorical_parent_metric_form_policy": "stratum_means",
+        },
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["C", "X", "Y"],
+            "edges": [["C", "Y"], ["X", "Y"]],
+        },
+        "node_params": {
+            "C": {"type": "categorical", "cardinality": 3},
+            "X": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 1.0}},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "linear"},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 0.1},
+            },
+        },
+    }
+    with pytest.raises(ValueError, match="requires all parents to be categorical"):
+        CausalDataGenerator(config).simulate()
+
+
 def test_threshold_defaults_do_not_depend_on_realized_sample():
     base = {
         "simulation_params": {"n_samples": 100, "seed_structure": 12},
@@ -244,6 +271,24 @@ def test_threshold_defaults_do_not_depend_on_realized_sample():
     th_a = res_a["parametrization"]["node_params"]["C"]["categorical_model"]["thresholds"]
     th_b = res_b["parametrization"]["node_params"]["C"]["categorical_model"]["thresholds"]
     assert th_a == th_b
+
+
+def test_threshold_scale_default_is_sampled_and_persisted():
+    config = {
+        "simulation_params": {"n_samples": 80, "seed_structure": 51, "seed_data": 52},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "C"],
+            "edges": [["X", "C"]],
+        },
+        "node_params": {
+            "X": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 1.0}},
+            "C": {"type": "categorical", "cardinality": 5, "categorical_model": {"name": "threshold"}},
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    scale = result["parametrization"]["node_params"]["C"]["categorical_model"]["threshold_scale"]
+    assert 0.5 <= float(scale) <= 2.0
 
 
 def test_logistic_random_weights_respect_min_abs_and_are_persisted():
