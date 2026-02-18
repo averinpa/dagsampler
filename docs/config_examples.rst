@@ -38,6 +38,40 @@ Random DAG
      }
    }
 
+Random weights with near-zero exclusion (faithfulness-oriented)
+---------------------------------------------------------------
+
+.. code-block:: json
+
+   {
+     "simulation_params": {
+       "n_samples": 500,
+       "seed_structure": 201,
+       "seed_data": 202,
+       "random_weight_low": -1.5,
+       "random_weight_high": 1.5,
+       "random_weight_min_abs": 0.1
+     },
+     "graph_params": {
+       "type": "custom",
+       "nodes": ["X1", "X2", "X3", "Y"],
+       "edges": [["X1", "Y"], ["X2", "Y"], ["X3", "Y"]]
+     },
+     "node_params": {
+       "X1": { "type": "continuous", "distribution": { "name": "gaussian", "mean": 0, "std": 1 } },
+       "X2": { "type": "continuous", "distribution": { "name": "gaussian", "mean": 0, "std": 1 } },
+       "X3": { "type": "continuous", "distribution": { "name": "gaussian", "mean": 0, "std": 1 } },
+       "Y": {
+         "type": "continuous",
+         "functional_form": { "name": "linear" },
+         "noise_model": { "name": "additive", "dist": "gaussian", "std": 0.2 }
+       }
+     }
+   }
+
+In this setup, omitted linear weights are sampled from
+``[-1.5, -0.1] U [0.1, 1.5]``.
+
 Exogenous node distributions
 ----------------------------
 

@@ -109,6 +109,44 @@ class CausalDataGenerator:
         exp_logits = np.exp(logits - max_logits)
         return exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
 
+    def _sample_random_weight(self) -> float:
+        """
+        Samples a random weight with optional exclusion band around zero.
+
+        Controlled via simulation_params:
+            - random_weight_low (default -1.5)
+            - random_weight_high (default 1.5)
+            - random_weight_min_abs (default 0.0)
+        """
+        low = float(self.simulation_params.get("random_weight_low", -1.5))
+        high = float(self.simulation_params.get("random_weight_high", 1.5))
+        min_abs = float(self.simulation_params.get("random_weight_min_abs", 0.0))
+
+        if low >= high:
+            raise ValueError("random_weight_low must be strictly less than random_weight_high")
+        if min_abs < 0:
+            raise ValueError("random_weight_min_abs must be non-negative")
+
+        if min_abs == 0:
+            return float(self.rng_structure.uniform(low, high))
+
+        left_low, left_high = low, min(-min_abs, high)
+        right_low, right_high = max(min_abs, low), high
+
+        left_len = max(0.0, left_high - left_low)
+        right_len = max(0.0, right_high - right_low)
+        total = left_len + right_len
+
+        if total <= 0:
+            raise ValueError(
+                "No valid interval remains after applying random_weight_min_abs. "
+                "Adjust random_weight_low/high/min_abs."
+            )
+
+        if self.rng_structure.random() < (left_len / total):
+            return float(self.rng_structure.uniform(left_low, left_high))
+        return float(self.rng_structure.uniform(right_low, right_high))
+
     def _get_param(self, path: list, default_sampler: callable, node_type: str = None):
         """
         Gets a parameter from the config. If not found, it tries a default path 
@@ -533,11 +571,11 @@ class CausalDataGenerator:
             return param
 
         if form_name == 'linear':
-            weights = get_parent_param_dict('weights', lambda: {p: self.rng_structure.uniform(-1.5, 1.5) for p in parents})
+            weights = get_parent_param_dict('weights', lambda: {p: self._sample_random_weight() for p in parents})
             return sum(weights[p] * self.data[p] for p in parents)
         
         elif form_name == 'polynomial':
-            weights = get_parent_param_dict('weights', lambda: {p: self.rng_structure.uniform(-1.5, 1.5) for p in parents})
+            weights = get_parent_param_dict('weights', lambda: {p: self._sample_random_weight() for p in parents})
             degrees = get_parent_param_dict('degrees', lambda: {p: self.rng_structure.integers(2, 5) for p in parents})
             # Clip parent values to avoid overflow when raising to powers
             return sum(weights[p] * (self.data[p].clip(-SAFE_PARENT_CLIP, SAFE_PARENT_CLIP) ** degrees[p]) for p in parents)
@@ -545,7 +583,7 @@ class CausalDataGenerator:
         elif form_name == 'interaction':
             weights = self._get_param(
                 ['node_params', node, 'functional_form', 'weights'], 
-                lambda: {'interaction': self.rng_structure.uniform(-1.5, 1.5)},
+                lambda: {'interaction': self._sample_random_weight()},
                 node_type='endogenous'
             )
             interaction_term = pd.Series(1, index=self.data.index)

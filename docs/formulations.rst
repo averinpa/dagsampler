@@ -83,6 +83,28 @@ Stratum-specific means (categorical parents to continuous child):
 
 where :math:`s(\cdot)` indexes the categorical parent stratum.
 
+Random structural weights
+-------------------------
+
+When ``weights`` are omitted for ``linear``, ``polynomial``, or ``interaction``,
+the simulator samples weights from a configurable interval:
+
+.. math::
+
+   w \sim \mathrm{Uniform}(L, H)
+
+where ``L=random_weight_low`` and ``H=random_weight_high``.
+
+If ``random_weight_min_abs = m > 0``, values in :math:`(-m, m)` are excluded
+and weights are sampled from:
+
+.. math::
+
+   [L, -m] \cup [m, H]
+
+This is useful for CI benchmark settings where near-zero coefficients can cause
+practical faithfulness issues via cancellation.
+
 Noise models:
 
 Additive:
@@ -181,6 +203,9 @@ Compatibility Matrix
      - Continuous, binary, categorical, or mixed
      - ``categorical_model = logistic`` or ``categorical_model = threshold``
      - Softmax sampling (logistic) or threshold digitization
+
+For random structural weights, additional controls are:
+``random_weight_low``, ``random_weight_high``, and ``random_weight_min_abs``.
 
 CI Oracle (Ground Truth)
 ------------------------

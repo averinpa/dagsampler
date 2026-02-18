@@ -137,3 +137,35 @@ def test_endogenous_logistic_categorical_node():
     assert c_values.min() >= 0
     assert c_values.max() <= 2
     assert len(c_values.unique()) >= 2
+
+
+def test_random_weight_sampling_excludes_near_zero_band():
+    config = {
+        "simulation_params": {
+            "n_samples": 50,
+            "seed_structure": 99,
+            "seed_data": 100,
+            "random_weight_low": -1.5,
+            "random_weight_high": 1.5,
+            "random_weight_min_abs": 0.1,
+        },
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X1", "X2", "Y"],
+            "edges": [["X1", "Y"], ["X2", "Y"]],
+        },
+        "node_params": {
+            "X1": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 1.0}},
+            "X2": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 1.0}},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "linear"},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 0.1},
+            },
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    weights = result["parametrization"]["node_params"]["Y"]["functional_form"]["weights"]
+    for _, weight in weights.items():
+        assert abs(float(weight)) >= 0.1
+        assert abs(float(weight)) <= 1.5

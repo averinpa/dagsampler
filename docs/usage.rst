@@ -28,6 +28,28 @@ Python API
 
    result = CausalDataGenerator(config).simulate()
 
+Random weights away from zero
+-----------------------------
+
+For CI benchmark scenarios where near-zero coefficients are undesirable:
+
+.. code-block:: python
+
+   config = {
+       "simulation_params": {
+           "n_samples": 500,
+           "seed_structure": 11,
+           "seed_data": 12,
+           "random_weight_low": -1.5,
+           "random_weight_high": 1.5,
+           "random_weight_min_abs": 0.1,
+       },
+       "graph_params": {"type": "random", "n_nodes": 8, "edge_prob": 0.25},
+   }
+
+This samples random structural weights from
+``[-1.5, -0.1] U [0.1, 1.5]``.
+
 CLI
 ---
 

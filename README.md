@@ -14,6 +14,7 @@ Minimal Python package for generating synthetic data from causal DAGs.
   - continuous -> categorical (`categorical_model.name = "threshold"`)
   - categorical -> continuous (`functional_form.name = "stratum_means"`)
 - Additive/multiplicative/heteroskedastic noise
+- Random weight sampling controls (including exclusion band around zero)
 - Reproducibility via `seed_structure` and `seed_data`
 - Optional d-separation CI oracle output (`store_ci_oracle=true`)
 
@@ -24,6 +25,24 @@ uv venv
 source .venv/bin/activate
 uv pip install "dagsampler @ git+https://github.com/averinpa/dagsampler.git"
 ```
+
+## Random weights away from zero
+
+For CI benchmark settings where near-zero coefficients can cause practical
+faithfulness issues, configure:
+
+```json
+{
+  "simulation_params": {
+    "random_weight_low": -1.5,
+    "random_weight_high": 1.5,
+    "random_weight_min_abs": 0.1
+  }
+}
+```
+
+This samples random structural weights from:
+- `[-1.5, -0.1] U [0.1, 1.5]`
 
 ## Quick start (Python API)
 
