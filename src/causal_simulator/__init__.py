@@ -6,9 +6,19 @@ Provides the main public API surface for consumers of the package.
 from importlib.metadata import PackageNotFoundError, version
 
 from .causal_sim import CausalDataGenerator
+from .templates import (
+    chain_config,
+    collider_config,
+    fork_config,
+    independence_config,
+)
 
 __all__ = [
     "CausalDataGenerator",
+    "independence_config",
+    "chain_config",
+    "fork_config",
+    "collider_config",
 ]
 
 try:

@@ -1,7 +1,13 @@
 import pandas as pd
 import pytest
 
-from causal_simulator import CausalDataGenerator
+from causal_simulator import (
+    CausalDataGenerator,
+    chain_config,
+    collider_config,
+    fork_config,
+    independence_config,
+)
 
 
 def test_simulation_smoke_outputs_expected_shapes():
@@ -422,3 +428,101 @@ def test_imbalanced_categorical_proportions_are_respected():
     result = CausalDataGenerator(config).simulate()
     p0 = (result["data"]["C"] == 0).mean()
     assert p0 > 0.9
+
+
+def test_force_uniform_marginals_binary_exogenous():
+    config = {
+        "simulation_params": {
+            "n_samples": 10000,
+            "seed_structure": 1001,
+            "seed_data": 1002,
+            "force_uniform_marginals": True,
+        },
+        "graph_params": {"type": "custom", "nodes": ["B"], "edges": []},
+        "node_params": {"B": {"type": "binary"}},
+    }
+    result = CausalDataGenerator(config).simulate()
+    p = float((result["data"]["B"] == 1).mean())
+    assert 0.48 <= p <= 0.52
+
+
+def test_force_uniform_marginals_categorical_exogenous():
+    config = {
+        "simulation_params": {
+            "n_samples": 10000,
+            "seed_structure": 2001,
+            "seed_data": 2002,
+            "force_uniform_marginals": True,
+        },
+        "graph_params": {"type": "custom", "nodes": ["C"], "edges": []},
+        "node_params": {"C": {"type": "categorical", "cardinality": 4}},
+    }
+    result = CausalDataGenerator(config).simulate()
+    proportions = result["data"]["C"].value_counts(normalize=True).reindex([0, 1, 2, 3], fill_value=0.0)
+    for p in proportions.tolist():
+        assert 0.23 <= float(p) <= 0.27
+
+
+def test_independence_config_smoke():
+    cfg = independence_config(
+        var_specs=[
+            {"name": "X", "type": "continuous"},
+            {"name": "B", "type": "binary"},
+            {"name": "C", "type": "categorical", "cardinality": 4},
+        ],
+        n_samples=120,
+        seed=77,
+        force_uniform=True,
+    )
+    result = CausalDataGenerator(cfg).simulate()
+    assert result["data"].shape == (120, 3)
+    assert len(list(result["dag"].edges())) == 0
+
+
+def test_chain_config_smoke_continuous_linear():
+    cfg = chain_config(
+        var_specs=[
+            {"name": "A", "type": "continuous"},
+            {"name": "B", "type": "continuous"},
+            {"name": "Y", "type": "continuous"},
+        ],
+        mechanism="linear",
+        n_samples=80,
+        seed={"structure": 31, "data": 32},
+    )
+    result = CausalDataGenerator(cfg).simulate()
+    assert result["data"].shape == (80, 3)
+    assert list(result["dag"].edges()) == [("A", "B"), ("B", "Y")]
+
+
+def test_fork_config_smoke_mixed_stratum_means():
+    cfg = fork_config(
+        var_specs={
+            "root": {"name": "R", "type": "continuous"},
+            "left": {"name": "L", "type": "binary"},
+            "right": {"name": "Q", "type": "binary"},
+        },
+        mechanism="stratum_means",
+        n_samples=90,
+        seed=55,
+    )
+    result = CausalDataGenerator(cfg).simulate()
+    assert result["data"].shape == (90, 3)
+    assert len(list(result["dag"].edges())) == 2
+
+
+def test_collider_config_smoke_continuous_parents_categorical_collider():
+    cfg = collider_config(
+        var_specs={
+            "left": {"name": "X", "type": "continuous"},
+            "right": {"name": "Y", "type": "continuous"},
+            "collider": {"name": "C", "type": "categorical", "cardinality": 5},
+        },
+        mechanism="linear",
+        n_samples=110,
+        seed=88,
+    )
+    result = CausalDataGenerator(cfg).simulate()
+    assert result["data"].shape == (110, 3)
+    assert result["data"]["C"].min() >= 0
+    assert result["data"]["C"].max() <= 4

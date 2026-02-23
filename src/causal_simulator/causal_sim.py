@@ -421,6 +421,7 @@ class CausalDataGenerator:
 
     def _generate_exogenous_binary(self, node: str):
         """Generates data for a binary node with no parents."""
+        force_uniform = self.simulation_params.get("force_uniform_marginals", False)
         dist_name = self._get_param(
             ['node_params', node, 'distribution', 'name'], 
             lambda: 'bernoulli',
@@ -429,22 +430,37 @@ class CausalDataGenerator:
         if dist_name != 'bernoulli':
             raise ValueError(f"Binary exogenous node '{node}' must use 'bernoulli' distribution.")
         
-        p = self._get_param(
-            ['node_params', node, 'distribution', 'p'], 
-            lambda: self.rng_structure.uniform(0.1, 0.9),
-            node_type='exogenous'
-        )
+        if force_uniform:
+            p = self._get_param(
+                ['node_params', node, 'distribution', 'p'],
+                lambda: 0.5,
+                node_type='exogenous'
+            )
+        else:
+            p = self._get_param(
+                ['node_params', node, 'distribution', 'p'], 
+                lambda: self.rng_structure.uniform(0.1, 0.9),
+                node_type='exogenous'
+            )
         self.data[node] = self.rng_data.binomial(1, p, size=self.data.shape[0])
 
     def _generate_exogenous_categorical(self, node: str):
         """Generates data for a categorical exogenous node."""
+        force_uniform = self.simulation_params.get("force_uniform_marginals", False)
         n_samples = self.data.shape[0]
         cardinality = self._node_cardinality(node)
-        probs = self._get_param(
-            ['node_params', node, 'distribution', 'probs'],
-            lambda: self.rng_structure.dirichlet(np.ones(cardinality)).tolist(),
-            node_type='exogenous'
-        )
+        if force_uniform:
+            probs = self._get_param(
+                ['node_params', node, 'distribution', 'probs'],
+                lambda: (np.ones(cardinality) / cardinality).tolist(),
+                node_type='exogenous'
+            )
+        else:
+            probs = self._get_param(
+                ['node_params', node, 'distribution', 'probs'],
+                lambda: self.rng_structure.dirichlet(np.ones(cardinality)).tolist(),
+                node_type='exogenous'
+            )
         probs = np.asarray(probs, dtype=float)
         if probs.shape[0] != cardinality:
             raise ValueError(
