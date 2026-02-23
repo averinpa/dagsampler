@@ -68,16 +68,54 @@ def _endogenous_node_params(
     # Fallback to linear when caller requests stratum_means without one.
     if mechanism == "stratum_means" and has_categorical_parent:
         cfg["functional_form"] = {"name": "stratum_means"}
-    elif mechanism in {"linear", "stratum_means"}:
-        cfg["functional_form"] = {"name": "linear"}
+    elif mechanism in {"linear", "stratum_means", "sigmoid"}:
+        form_name = "sigmoid" if mechanism == "sigmoid" else "linear"
+        cfg["functional_form"] = {"name": form_name}
     else:
-        raise ValueError("mechanism must be 'linear' or 'stratum_means'")
+        raise ValueError("mechanism must be 'linear', 'sigmoid', or 'stratum_means'")
 
     if spec["type"] == "continuous":
         cfg["noise_model"] = {"name": "additive", "dist": "gaussian", "std": 0.5}
     elif spec["type"] == "binary":
         cfg["noise_model"] = {"name": "additive", "dist": "gaussian", "std": 0.5}
     return cfg
+
+
+def indep_config(
+    var_specs: list[VarSpec] | None = None,
+    n_samples: int = 100,
+    seed: SeedSpec = None,
+    force_uniform: bool = True,
+    force_uniform_marginals: bool | None = None,
+    n_vars: int | None = None,
+    node_type: str = "binary",
+    cardinality: int = 2,
+    prefix: str = "X",
+) -> dict[str, Any]:
+    """
+    Backward-compatible shorthand for independent-node configurations.
+
+    If ``var_specs`` is omitted, generate ``n_vars`` variables of ``node_type``
+    (default: binary) named ``{prefix}0..{prefix}{n_vars-1}``.
+    """
+    if force_uniform_marginals is not None:
+        force_uniform = bool(force_uniform_marginals)
+    if var_specs is None:
+        count = int(n_vars if n_vars is not None else 1)
+        if count <= 0:
+            raise ValueError("n_vars must be positive when var_specs is not provided")
+        var_specs = []
+        for i in range(count):
+            spec: VarSpec = {"name": f"{prefix}{i}", "type": node_type}
+            if node_type == "categorical":
+                spec["cardinality"] = int(cardinality)
+            var_specs.append(spec)
+    return independence_config(
+        var_specs=var_specs,
+        n_samples=n_samples,
+        seed=seed,
+        force_uniform=force_uniform,
+    )
 
 
 def independence_config(

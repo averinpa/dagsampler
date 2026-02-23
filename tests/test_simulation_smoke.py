@@ -9,6 +9,7 @@ from causal_simulator import (
     chain_config,
     collider_config,
     fork_config,
+    indep_config,
     independence_config,
 )
 
@@ -719,3 +720,58 @@ def test_force_uniform_does_not_override_explicit_p():
     result = CausalDataGenerator(config).simulate()
     p_hat = float((result["data"]["B"] == 1).mean())
     assert 0.27 <= p_hat <= 0.33
+
+
+def test_sigmoid_functional_form():
+    config = {
+        "simulation_params": {"n_samples": 150, "seed_structure": 501, "seed_data": 502},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X1", "X2", "Y"],
+            "edges": [["X1", "Y"], ["X2", "Y"]],
+        },
+        "node_params": {
+            "X1": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 1.0}},
+            "X2": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 1.0}},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "sigmoid"},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 0.05},
+            },
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    ff = result["parametrization"]["node_params"]["Y"]["functional_form"]
+    assert "weights" in ff
+    assert "output_weight" in ff
+    assert np.isfinite(result["data"]["Y"].to_numpy()).all()
+
+
+def test_indep_config_force_uniform_marginals_binary():
+    cfg = indep_config(
+        n_vars=6,
+        n_samples=200,
+        seed=777,
+        force_uniform_marginals=True,
+    )
+    result = CausalDataGenerator(cfg).simulate()
+    data = result["data"]
+    for col in data.columns:
+        assert abs(float(data[col].mean()) - 0.5) <= 0.05
+
+
+def test_force_uniform_categorical_balanced_small_sample():
+    config = {
+        "simulation_params": {
+            "n_samples": 11,
+            "seed_structure": 601,
+            "seed_data": 602,
+            "force_uniform_marginals": True,
+        },
+        "graph_params": {"type": "custom", "nodes": ["C"], "edges": []},
+        "node_params": {"C": {"type": "categorical", "cardinality": 2}},
+    }
+    result = CausalDataGenerator(config).simulate()
+    counts = result["data"]["C"].value_counts().to_dict()
+    assert set(counts.keys()) <= {0, 1}
+    assert abs(counts.get(0, 0) - counts.get(1, 0)) <= 1

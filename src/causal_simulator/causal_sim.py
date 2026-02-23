@@ -242,6 +242,16 @@ class CausalDataGenerator:
         
         return value
 
+    def _config_has_path(self, path: list[str]) -> bool:
+        """Return True if the provided config path exists in the original config."""
+        current_level: Any = self.config
+        for key in path:
+            if isinstance(current_level, dict) and key in current_level:
+                current_level = current_level[key]
+            else:
+                return False
+        return True
+
     # --- Graph Generation ---
 
     def _create_graph(self):
@@ -470,7 +480,18 @@ class CausalDataGenerator:
                 lambda: self.rng_structure.uniform(0.1, 0.9),
                 node_type='exogenous'
             )
-        self.data[node] = self.rng_data.binomial(1, p, size=self.data.shape[0])
+        n_samples = self.data.shape[0]
+        has_explicit_p = self._config_has_path(['node_params', node, 'distribution', 'p'])
+        # When force_uniform_marginals is active and p comes from default 0.5,
+        # generate a balanced sample to avoid small-sample fluctuations.
+        if force_uniform and not has_explicit_p and float(p) == 0.5:
+            n_ones = n_samples // 2
+            values = np.zeros(n_samples, dtype=int)
+            values[:n_ones] = 1
+            self.rng_data.shuffle(values)
+            self.data[node] = values
+        else:
+            self.data[node] = self.rng_data.binomial(1, p, size=n_samples)
 
     def _generate_exogenous_categorical(self, node: str):
         """Generates data for a categorical exogenous node."""
@@ -495,7 +516,22 @@ class CausalDataGenerator:
                 f"Categorical exogenous node '{node}' expects {cardinality} probabilities, got {probs.shape[0]}"
             )
         probs = probs / probs.sum()
-        self.data[node] = self.rng_data.choice(np.arange(cardinality), size=n_samples, p=probs)
+        has_explicit_probs = self._config_has_path(['node_params', node, 'distribution', 'probs'])
+        if force_uniform and not has_explicit_probs:
+            base = n_samples // cardinality
+            remainder = n_samples % cardinality
+            counts = np.full(cardinality, base, dtype=int)
+            if remainder > 0:
+                extra_idx = self.rng_data.permutation(cardinality)[:remainder]
+                counts[extra_idx] += 1
+            values = np.concatenate(
+                [np.full(counts[k], k, dtype=int) for k in range(cardinality)],
+                dtype=int,
+            )
+            self.rng_data.shuffle(values)
+            self.data[node] = values
+        else:
+            self.data[node] = self.rng_data.choice(np.arange(cardinality), size=n_samples, p=probs)
 
     def _generate_endogenous_continuous(self, node: str, parents: list):
         """Generates data for a continuous node with parents."""
@@ -633,11 +669,11 @@ class CausalDataGenerator:
         """Computes a node's base value from its parents' data."""
         form_name = self._get_param(
             ['node_params', node, 'functional_form', 'name'], 
-            lambda: self.rng_structure.choice(['linear', 'polynomial', 'interaction']),
+            lambda: self.rng_structure.choice(['linear', 'polynomial', 'interaction', 'sigmoid']),
             node_type='endogenous'
         )
         categorical_parents = [p for p in parents if self._node_type(p) == "categorical"]
-        if form_name in {"linear", "polynomial", "interaction"} and categorical_parents:
+        if form_name in {"linear", "polynomial", "interaction", "sigmoid"} and categorical_parents:
             policy = str(self.simulation_params.get("categorical_parent_metric_form_policy", "error")).lower()
             if policy == "stratum_means":
                 form_name = "stratum_means"
@@ -704,6 +740,25 @@ class CausalDataGenerator:
             for p in parents:
                 interaction_term *= self.data[p].clip(-SAFE_PARENT_CLIP, SAFE_PARENT_CLIP)
             return weights.get('interaction', 1.0) * interaction_term
+        elif form_name == 'sigmoid':
+            weights = get_parent_param_dict(
+                'weights',
+                lambda: {p: self._sample_random_weight() for p in parents},
+            )
+            output_weight = float(
+                self._get_param(
+                    ['node_params', node, 'functional_form', 'output_weight'],
+                    lambda: self._sample_random_weight(),
+                    node_type='endogenous',
+                )
+            )
+            latent = np.zeros(self.data.shape[0], dtype=float)
+            for p in parents:
+                latent += float(weights[p]) * np.asarray(
+                    self.data[p].clip(-SAFE_PARENT_CLIP, SAFE_PARENT_CLIP),
+                    dtype=float,
+                )
+            return pd.Series(output_weight * np.tanh(latent), index=self.data.index)
         elif form_name == 'stratum_means':
             strata_means = self._get_param(
                 ['node_params', node, 'functional_form', 'strata_means'],

@@ -10,11 +10,13 @@ from .templates import (
     chain_config,
     collider_config,
     fork_config,
+    indep_config,
     independence_config,
 )
 
 __all__ = [
     "CausalDataGenerator",
+    "indep_config",
     "independence_config",
     "chain_config",
     "fork_config",
