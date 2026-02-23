@@ -15,10 +15,17 @@ SAFE_OUTPUT_CLIP = 1e12
 
 
 def _heteroskedastic_abs_first_parent(parent_data: pd.DataFrame) -> np.ndarray:
+    """Return heteroskedastic std as ``0.5 * |first_parent|``."""
     return 0.5 * np.abs(parent_data.iloc[:, 0].to_numpy())
 
 
 def _heteroskedastic_abs_named_plus_const(parent_data: pd.DataFrame) -> np.ndarray:
+    """
+    Return ``0.5 * |parent| + 0.1`` using a preferred parent column.
+
+    Selects column ``"X"`` when available, otherwise ``"Exo_StudentT"``,
+    and falls back to the first parent column.
+    """
     if "X" in parent_data.columns:
         return 0.5 * np.abs(parent_data["X"].to_numpy()) + 0.1
     if "Exo_StudentT" in parent_data.columns:
@@ -27,6 +34,7 @@ def _heteroskedastic_abs_named_plus_const(parent_data: pd.DataFrame) -> np.ndarr
 
 
 def _heteroskedastic_mean_abs_plus_const(parent_data: pd.DataFrame) -> np.ndarray:
+    """Return heteroskedastic std as ``0.5 * mean(abs(parents)) + 0.1`` per row."""
     return 0.5 * np.mean(np.abs(parent_data.to_numpy()), axis=1) + 0.1
 
 
@@ -95,19 +103,28 @@ class CausalDataGenerator:
         self.final_parametrization['simulation_params']['seed_data'] = self.seed_data
 
     def _sanitize_series(self, series: pd.Series) -> pd.Series:
+        """
+        Replace NaN/Inf values and clip to a safe numeric range.
+
+        Inf and NaN are converted via ``np.nan_to_num`` and all values are
+        clipped to ``[-1e12, 1e12]``.
+        """
         values = series.to_numpy(copy=False)
         values = np.nan_to_num(values, posinf=SAFE_OUTPUT_CLIP, neginf=-SAFE_OUTPUT_CLIP)
         values = np.clip(values, -SAFE_OUTPUT_CLIP, SAFE_OUTPUT_CLIP)
         return pd.Series(values, index=series.index)
 
     def _node_type(self, node: str) -> str:
+        """Return the stored node type, defaulting to ``"continuous"``."""
         return self.node_types.get(node, "continuous")
 
     def _node_cardinality(self, node: str) -> int:
+        """Return the stored node cardinality, defaulting to ``2``."""
         return int(self.node_cardinalities.get(node, 2))
 
     @staticmethod
     def _stable_softmax(logits: np.ndarray) -> np.ndarray:
+        """Compute a numerically stable softmax by subtracting row-wise maxima."""
         max_logits = np.max(logits, axis=1, keepdims=True)
         exp_logits = np.exp(logits - max_logits)
         return exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
@@ -271,7 +288,18 @@ class CausalDataGenerator:
     # --- Data Simulation Engine ---
 
     def simulate(self) -> dict[str, Any]:
-        """Main public method to run the full simulation."""
+        """
+        Run the full simulation pipeline and return generated artifacts.
+
+        Returns:
+            dict[str, Any]: Dictionary with:
+                - ``"data"``: pandas DataFrame with one column per node.
+                - ``"parametrization"``: dict containing all resolved parameters
+                  (including sampled defaults) used for generation.
+                - ``"dag"``: networkx.DiGraph aligned to the dataframe column order.
+                - ``"ci_oracle"`` (optional): list of d-separation records when
+                  ``simulation_params.store_ci_oracle`` is enabled.
+        """
         self._create_graph()
 
         n_samples = self.simulation_params.get('n_samples', 100)
@@ -898,8 +926,16 @@ class CausalDataGenerator:
         """
         Builds a d-separation oracle from the generated DAG.
 
+        Args:
+            max_cond_set_size (int): Maximum conditioning-set cardinality to
+                enumerate for each unordered node pair.
+
         Returns:
-            list: Records with keys x, y, conditioning_set, is_independent.
+            list: Each record is a dict with:
+                - ``x`` (str): first node in the queried pair.
+                - ``y`` (str): second node in the queried pair.
+                - ``conditioning_set`` (list[str]): conditioning variables.
+                - ``is_independent`` (bool): d-separation result.
         """
         nodes = list(self.graph.nodes())
         oracle = []

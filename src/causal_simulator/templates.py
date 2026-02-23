@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
+
+VarSpec: TypeAlias = dict[str, Any]
+SeedSpec: TypeAlias = int | dict[str, int] | None
+MechanismName: TypeAlias = str
 
 
-def _seed_params(seed: int | dict[str, int] | None) -> dict[str, int]:
+def _seed_params(seed: SeedSpec) -> dict[str, int]:
     if seed is None:
         return {}
     if isinstance(seed, int):
@@ -22,7 +26,7 @@ def _seed_params(seed: int | dict[str, int] | None) -> dict[str, int]:
     raise ValueError("seed must be int, dict, or None")
 
 
-def _normalize_var_spec(spec: dict[str, Any]) -> dict[str, Any]:
+def _normalize_var_spec(spec: VarSpec) -> VarSpec:
     if "name" not in spec or "type" not in spec:
         raise ValueError("each var spec must include 'name' and 'type'")
     var_type = str(spec["type"])
@@ -34,7 +38,7 @@ def _normalize_var_spec(spec: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _base_config(n_samples: int, seed: int | dict[str, int] | None) -> dict[str, Any]:
+def _base_config(n_samples: int, seed: SeedSpec) -> dict[str, Any]:
     return {
         "simulation_params": {
             "n_samples": int(n_samples),
@@ -43,7 +47,7 @@ def _base_config(n_samples: int, seed: int | dict[str, int] | None) -> dict[str,
     }
 
 
-def _exogenous_node_params(spec: dict[str, Any]) -> dict[str, Any]:
+def _exogenous_node_params(spec: VarSpec) -> dict[str, Any]:
     node_cfg: dict[str, Any] = {"type": spec["type"]}
     if spec["type"] == "categorical":
         node_cfg["cardinality"] = spec["cardinality"]
@@ -51,7 +55,7 @@ def _exogenous_node_params(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def _endogenous_node_params(
-    spec: dict[str, Any], parents: list[dict[str, Any]], mechanism: str
+    spec: VarSpec, parents: list[VarSpec], mechanism: MechanismName
 ) -> dict[str, Any]:
     cfg: dict[str, Any] = {"type": spec["type"]}
     if spec["type"] == "categorical":
@@ -76,7 +80,12 @@ def _endogenous_node_params(
     return cfg
 
 
-def independence_config(var_specs, n_samples, seed=None, force_uniform=True):
+def independence_config(
+    var_specs: list[VarSpec],
+    n_samples: int,
+    seed: SeedSpec = None,
+    force_uniform: bool = True,
+) -> dict[str, Any]:
     """
     Config with no edges. All nodes are exogenous.
 
@@ -101,7 +110,12 @@ def independence_config(var_specs, n_samples, seed=None, force_uniform=True):
     return config
 
 
-def chain_config(var_specs, mechanism, n_samples, seed=None):
+def chain_config(
+    var_specs: list[VarSpec],
+    mechanism: MechanismName,
+    n_samples: int,
+    seed: SeedSpec = None,
+) -> dict[str, Any]:
     """
     Chain: var_specs[0] -> var_specs[1] -> ... -> var_specs[-1].
     var_specs: ordered list of {"name", "type", optionally "cardinality"}.
@@ -134,7 +148,12 @@ def chain_config(var_specs, mechanism, n_samples, seed=None):
     return config
 
 
-def fork_config(var_specs, mechanism, n_samples, seed=None):
+def fork_config(
+    var_specs: dict[str, VarSpec],
+    mechanism: MechanismName,
+    n_samples: int,
+    seed: SeedSpec = None,
+) -> dict[str, Any]:
     """
     Fork: root -> left, root -> right.
     var_specs: dict with keys "root", "left", "right" — each a node spec
@@ -161,7 +180,12 @@ def fork_config(var_specs, mechanism, n_samples, seed=None):
     return config
 
 
-def collider_config(var_specs, mechanism, n_samples, seed=None):
+def collider_config(
+    var_specs: dict[str, VarSpec],
+    mechanism: MechanismName,
+    n_samples: int,
+    seed: SeedSpec = None,
+) -> dict[str, Any]:
     """
     Collider: left -> collider, right -> collider.
     var_specs: dict with keys "left", "right", "collider" — each a node spec dict.

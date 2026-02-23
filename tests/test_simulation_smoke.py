@@ -1,3 +1,6 @@
+import copy
+
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -8,6 +11,15 @@ from causal_simulator import (
     fork_config,
     independence_config,
 )
+
+
+def _oracle_lookup(oracle, x: str, y: str, conditioning_set: list[str]) -> bool:
+    xy = {x, y}
+    target_cond = set(conditioning_set)
+    for row in oracle:
+        if {row["x"], row["y"]} == xy and set(row["conditioning_set"]) == target_cond:
+            return bool(row["is_independent"])
+    raise AssertionError(f"CI oracle entry missing for ({x}, {y}) | {conditioning_set}")
 
 
 def test_simulation_smoke_outputs_expected_shapes():
@@ -526,3 +538,184 @@ def test_collider_config_smoke_continuous_parents_categorical_collider():
     assert result["data"].shape == (110, 3)
     assert result["data"]["C"].min() >= 0
     assert result["data"]["C"].max() <= 4
+
+
+def test_polynomial_functional_form():
+    config = {
+        "simulation_params": {"n_samples": 120, "seed_structure": 101, "seed_data": 102},
+        "graph_params": {"type": "custom", "nodes": ["X", "Y"], "edges": [["X", "Y"]]},
+        "node_params": {
+            "X": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 1.0}},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "polynomial"},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 0.1},
+            },
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    degrees = result["parametrization"]["node_params"]["Y"]["functional_form"]["degrees"]
+    assert 2 <= int(degrees["X"]) <= 4
+    assert np.isfinite(result["data"]["Y"].to_numpy()).all()
+
+
+def test_interaction_functional_form():
+    config = {
+        "simulation_params": {"n_samples": 90, "seed_structure": 111, "seed_data": 112},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X1", "X2", "Y"],
+            "edges": [["X1", "Y"], ["X2", "Y"]],
+        },
+        "node_params": {
+            "X1": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 1.0}},
+            "X2": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 1.0}},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "interaction"},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 0.1},
+            },
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    weights = result["parametrization"]["node_params"]["Y"]["functional_form"]["weights"]
+    assert "interaction" in weights
+    assert np.isfinite(result["data"]["Y"].to_numpy()).all()
+
+
+def test_exogenous_student_t():
+    config = {
+        "simulation_params": {"n_samples": 80, "seed_structure": 121, "seed_data": 122},
+        "graph_params": {"type": "custom", "nodes": ["X"], "edges": []},
+        "node_params": {"X": {"type": "continuous", "distribution": {"name": "student_t"}}},
+    }
+    result = CausalDataGenerator(config).simulate()
+    dist = result["parametrization"]["node_params"]["X"]["distribution"]
+    assert "df" in dist
+
+
+def test_exogenous_gamma():
+    config = {
+        "simulation_params": {"n_samples": 80, "seed_structure": 131, "seed_data": 132},
+        "graph_params": {"type": "custom", "nodes": ["X"], "edges": []},
+        "node_params": {"X": {"type": "continuous", "distribution": {"name": "gamma"}}},
+    }
+    result = CausalDataGenerator(config).simulate()
+    assert np.isfinite(result["data"]["X"].to_numpy()).all()
+
+
+def test_exogenous_exponential():
+    config = {
+        "simulation_params": {"n_samples": 80, "seed_structure": 141, "seed_data": 142},
+        "graph_params": {"type": "custom", "nodes": ["X"], "edges": []},
+        "node_params": {"X": {"type": "continuous", "distribution": {"name": "exponential"}}},
+    }
+    result = CausalDataGenerator(config).simulate()
+    assert np.isfinite(result["data"]["X"].to_numpy()).all()
+
+
+def test_ci_oracle_chain_d_separation():
+    config = {
+        "simulation_params": {
+            "n_samples": 40,
+            "seed_structure": 201,
+            "seed_data": 202,
+            "store_ci_oracle": True,
+            "ci_oracle_max_cond_set": 1,
+        },
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Z", "Y"],
+            "edges": [["X", "Z"], ["Z", "Y"]],
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    oracle = result["ci_oracle"]
+    assert _oracle_lookup(oracle, "X", "Y", ["Z"]) is True
+    assert _oracle_lookup(oracle, "X", "Y", []) is False
+
+
+def test_ci_oracle_collider_d_separation():
+    config = {
+        "simulation_params": {
+            "n_samples": 40,
+            "seed_structure": 211,
+            "seed_data": 212,
+            "store_ci_oracle": True,
+            "ci_oracle_max_cond_set": 1,
+        },
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Z", "Y"],
+            "edges": [["X", "Z"], ["Y", "Z"]],
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    oracle = result["ci_oracle"]
+    assert _oracle_lookup(oracle, "X", "Y", []) is True
+    assert _oracle_lookup(oracle, "X", "Y", ["Z"]) is False
+
+
+def test_ci_oracle_fork_d_separation():
+    config = {
+        "simulation_params": {
+            "n_samples": 40,
+            "seed_structure": 221,
+            "seed_data": 222,
+            "store_ci_oracle": True,
+            "ci_oracle_max_cond_set": 1,
+        },
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Z", "Y"],
+            "edges": [["Z", "X"], ["Z", "Y"]],
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    oracle = result["ci_oracle"]
+    assert _oracle_lookup(oracle, "X", "Y", ["Z"]) is True
+    assert _oracle_lookup(oracle, "X", "Y", []) is False
+
+
+def test_parametrization_reuse_gives_identical_data():
+    config = {
+        "simulation_params": {"n_samples": 100, "seed_structure": 301, "seed_data": 302},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Y", "Z"],
+            "edges": [["X", "Z"], ["Y", "Z"]],
+        },
+        "node_params": {
+            "X": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.1, "std": 1.1}},
+            "Y": {"type": "continuous", "distribution": {"name": "student_t", "df": 6}},
+            "Z": {
+                "type": "continuous",
+                "functional_form": {"name": "polynomial"},
+                "noise_model": {"name": "additive", "dist": "gamma"},
+            },
+        },
+    }
+    first = CausalDataGenerator(config).simulate()
+    replay_config = copy.deepcopy(first["parametrization"])
+    replay_config.setdefault("simulation_params", {})
+    replay_config["simulation_params"]["seed_data"] = first["parametrization"]["simulation_params"]["seed_data"]
+    second = CausalDataGenerator(replay_config).simulate()
+    pd.testing.assert_frame_equal(first["data"], second["data"])
+
+
+def test_force_uniform_does_not_override_explicit_p():
+    config = {
+        "simulation_params": {
+            "n_samples": 10000,
+            "seed_structure": 401,
+            "seed_data": 402,
+            "force_uniform_marginals": True,
+        },
+        "graph_params": {"type": "custom", "nodes": ["B"], "edges": []},
+        "node_params": {
+            "B": {"type": "binary", "distribution": {"name": "bernoulli", "p": 0.3}},
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    p_hat = float((result["data"]["B"] == 1).mean())
+    assert 0.27 <= p_hat <= 0.33
