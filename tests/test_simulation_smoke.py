@@ -917,3 +917,164 @@ def test_post_transform_chain_template():
     result = CausalDataGenerator(cfg).simulate()
     y = result["data"]["Y"].to_numpy()
     assert np.all(y >= -1.0) and np.all(y <= 1.0)
+
+
+# ---------- functional_form: cos / sin ----------
+
+
+def test_functional_form_cos_bounded():
+    """cos functional form should produce values in [-1, 1]."""
+    cfg = {
+        "simulation_params": {"n_samples": 500, "seed_structure": 60, "seed_data": 60},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Y"],
+            "edges": [["X", "Y"]],
+        },
+        "node_params": {
+            "X": {"type": "continuous"},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "cos", "weights": {"X": 1.0}},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 0.0},
+            },
+        },
+    }
+    result = CausalDataGenerator(cfg).simulate()
+    y = result["data"]["Y"].to_numpy()
+    assert np.all(y >= -1.0) and np.all(y <= 1.0)
+
+
+def test_functional_form_sin_bounded():
+    """sin functional form should produce values in [-1, 1] (with zero noise)."""
+    cfg = {
+        "simulation_params": {"n_samples": 500, "seed_structure": 61, "seed_data": 61},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Y"],
+            "edges": [["X", "Y"]],
+        },
+        "node_params": {
+            "X": {"type": "continuous"},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "sin", "weights": {"X": 1.0}},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 0.0},
+            },
+        },
+    }
+    result = CausalDataGenerator(cfg).simulate()
+    y = result["data"]["Y"].to_numpy()
+    assert np.all(y >= -1.0) and np.all(y <= 1.0)
+
+
+def test_functional_form_cos_creates_nonlinear_dependence():
+    """cos(X) should create dependence that departs from linear correlation."""
+    cfg = {
+        "simulation_params": {"n_samples": 2000, "seed_structure": 62, "seed_data": 62},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Y"],
+            "edges": [["X", "Y"]],
+        },
+        "node_params": {
+            "X": {"type": "continuous"},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "cos", "weights": {"X": 1.0}},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 0.1},
+            },
+        },
+    }
+    result = CausalDataGenerator(cfg).simulate()
+    x = result["data"]["X"].to_numpy()
+    y = result["data"]["Y"].to_numpy()
+    # cos is an even function — linear correlation should be near 0
+    # but Y is clearly dependent on X
+    corr = np.abs(np.corrcoef(x, y)[0, 1])
+    assert corr < 0.3, f"cos(X) should have near-zero linear correlation, got {corr}"
+
+
+def test_functional_form_cos_persisted_in_parametrization():
+    """cos functional form name should appear in final_parametrization."""
+    cfg = {
+        "simulation_params": {"n_samples": 50, "seed_structure": 63, "seed_data": 63},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Y"],
+            "edges": [["X", "Y"]],
+        },
+        "node_params": {
+            "X": {"type": "continuous"},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "cos"},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 0.5},
+            },
+        },
+    }
+    result = CausalDataGenerator(cfg).simulate()
+    y_params = result["parametrization"]["node_params"]["Y"]
+    assert y_params["functional_form"]["name"] == "cos"
+
+
+# ---------- additive noise: laplace / cauchy / uniform ----------
+
+
+def _make_noise_config(dist: str, **dist_params):
+    """Helper: chain X->Y with specified additive noise distribution."""
+    return {
+        "simulation_params": {"n_samples": 2000, "seed_structure": 70, "seed_data": 70},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Y"],
+            "edges": [["X", "Y"]],
+        },
+        "node_params": {
+            "X": {"type": "continuous"},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "linear", "weights": {"X": 0.0}},
+                "noise_model": {"name": "additive", "dist": dist, **dist_params},
+            },
+        },
+    }
+
+
+def test_additive_laplace_zero_mean():
+    """Laplace noise should be zero-mean and heavier-tailed than Gaussian."""
+    cfg = _make_noise_config("laplace", scale=1.0)
+    result = CausalDataGenerator(cfg).simulate()
+    y = result["data"]["Y"].to_numpy()
+    assert abs(np.mean(y)) < 0.15, f"Laplace noise should be ~zero-mean, got {np.mean(y)}"
+    # Laplace has excess kurtosis = 3 (total kurtosis = 6)
+    from scipy.stats import kurtosis
+    k = kurtosis(y)
+    assert k > 1.5, f"Laplace should be leptokurtic (excess kurtosis > 1.5), got {k}"
+
+
+def test_additive_cauchy_heavy_tails():
+    """Cauchy noise should produce extreme outliers."""
+    cfg = _make_noise_config("cauchy", scale=1.0)
+    result = CausalDataGenerator(cfg).simulate()
+    y = result["data"]["Y"].to_numpy()
+    # Cauchy has undefined variance — should have values far from center
+    max_abs = np.max(np.abs(y))
+    assert max_abs > 5.0, f"Cauchy should have extreme outliers, max |Y| = {max_abs}"
+
+
+def test_additive_uniform_bounded():
+    """Uniform noise in [-scale, scale] should be bounded."""
+    cfg = _make_noise_config("uniform", scale=2.0)
+    result = CausalDataGenerator(cfg).simulate()
+    y = result["data"]["Y"].to_numpy()
+    assert np.all(y >= -2.0) and np.all(y <= 2.0), "Uniform noise should be bounded by scale"
+    assert abs(np.mean(y)) < 0.15, f"Uniform noise should be ~zero-mean, got {np.mean(y)}"
+
+
+def test_additive_laplace_persisted_in_parametrization():
+    """Laplace dist name should appear in parametrization."""
+    cfg = _make_noise_config("laplace", scale=1.0)
+    result = CausalDataGenerator(cfg).simulate()
+    y_noise = result["parametrization"]["node_params"]["Y"]["noise_model"]
+    assert y_noise["dist"] == "laplace"

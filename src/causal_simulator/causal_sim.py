@@ -684,7 +684,7 @@ class CausalDataGenerator:
             node_type='endogenous'
         )
         categorical_parents = [p for p in parents if self._node_type(p) == "categorical"]
-        if form_name in {"linear", "polynomial", "interaction", "sigmoid"} and categorical_parents:
+        if form_name in {"linear", "polynomial", "interaction", "sigmoid", "cos", "sin"} and categorical_parents:
             policy = str(self.simulation_params.get("categorical_parent_metric_form_policy", "error")).lower()
             if policy == "stratum_means":
                 form_name = "stratum_means"
@@ -770,6 +770,16 @@ class CausalDataGenerator:
                     dtype=float,
                 )
             return pd.Series(output_weight * np.tanh(latent), index=self.data.index)
+        elif form_name == 'cos':
+            weights = get_parent_param_dict('weights', lambda: {p: self._sample_random_weight() for p in parents})
+            latent = sum(weights[p] * self.data[p].clip(-SAFE_PARENT_CLIP, SAFE_PARENT_CLIP) for p in parents)
+            return pd.Series(np.cos(np.asarray(latent, dtype=float)), index=self.data.index)
+
+        elif form_name == 'sin':
+            weights = get_parent_param_dict('weights', lambda: {p: self._sample_random_weight() for p in parents})
+            latent = sum(weights[p] * self.data[p].clip(-SAFE_PARENT_CLIP, SAFE_PARENT_CLIP) for p in parents)
+            return pd.Series(np.sin(np.asarray(latent, dtype=float)), index=self.data.index)
+
         elif form_name == 'stratum_means':
             strata_means = self._get_param(
                 ['node_params', node, 'functional_form', 'strata_means'],
@@ -892,12 +902,36 @@ class CausalDataGenerator:
                 return base_value + noise
             elif dist == 'exponential':
                 scale = self._get_param(
-                    ['node_params', node, 'noise_model', 'scale'], 
+                    ['node_params', node, 'noise_model', 'scale'],
                     lambda: self.rng_structure.uniform(0.5, 2.0),
                     node_type='endogenous'
                 )
                 # Center to zero-mean
                 noise = self.rng_data.exponential(scale, size=n_samples) - scale
+                return base_value + noise
+            elif dist == 'laplace':
+                scale = self._get_param(
+                    ['node_params', node, 'noise_model', 'scale'],
+                    lambda: self.rng_structure.uniform(0.5, 1.5),
+                    node_type='endogenous'
+                )
+                noise = self.rng_data.laplace(0, scale, size=n_samples)
+                return base_value + noise
+            elif dist == 'cauchy':
+                scale = self._get_param(
+                    ['node_params', node, 'noise_model', 'scale'],
+                    lambda: self.rng_structure.uniform(0.5, 1.5),
+                    node_type='endogenous'
+                )
+                noise = self.rng_data.standard_cauchy(size=n_samples) * scale
+                return base_value + noise
+            elif dist == 'uniform':
+                scale = self._get_param(
+                    ['node_params', node, 'noise_model', 'scale'],
+                    lambda: self.rng_structure.uniform(0.5, 2.0),
+                    node_type='endogenous'
+                )
+                noise = self.rng_data.uniform(-scale, scale, size=n_samples)
                 return base_value + noise
             else:
                 raise ValueError(f"Unknown additive noise dist: {dist}")
