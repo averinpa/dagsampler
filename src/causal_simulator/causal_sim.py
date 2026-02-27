@@ -51,6 +51,16 @@ LEGACY_HETEROSKEDASTIC_FUNC_ALIASES = {
     "lambda p: 0.5 * np.mean(np.abs(p.values), axis=1) + 0.1": "mean_abs_plus_const",
 }
 
+POST_TRANSFORM_REGISTRY: dict[str, callable] = {
+    "tanh": np.tanh,
+    "sin": np.sin,
+    "cos": np.cos,
+    "exp_neg_abs": lambda x: np.exp(-np.abs(x)),
+    "sqrt_abs": lambda x: np.sqrt(np.abs(x)),
+    "relu": lambda x: np.maximum(0, x),
+    "sign": np.sign,
+}
+
 class CausalDataGenerator:
     """
     Generates data from a causal graph based on a detailed configuration.
@@ -537,6 +547,7 @@ class CausalDataGenerator:
         """Generates data for a continuous node with parents."""
         base_value = self._apply_functional_form(node, parents)
         final_value = self._apply_noise_model(node, base_value, parents)
+        final_value = self._apply_post_transform(node, final_value)
         self.data[node] = self._sanitize_series(final_value)
 
     def _generate_endogenous_binary(self, node: str, parents: list):
@@ -976,6 +987,28 @@ class CausalDataGenerator:
             return base_value + noise
         
         return base_value
+
+    def _apply_post_transform(self, node: str, value):
+        """
+        Apply an optional post-nonlinear transform g() to the node value.
+
+        Implements the post-nonlinear model: Y = g(f(parents) + noise).
+        If no post_transform is configured, returns value unchanged.
+        """
+        transform_name = self._get_param(
+            ['node_params', node, 'post_transform', 'name'],
+            lambda: None,
+            node_type='endogenous'
+        )
+        if transform_name is None:
+            return value
+        if transform_name not in POST_TRANSFORM_REGISTRY:
+            raise ValueError(
+                f"Unknown post_transform: '{transform_name}'. "
+                f"Available: {list(POST_TRANSFORM_REGISTRY.keys())}"
+            )
+        g = POST_TRANSFORM_REGISTRY[transform_name]
+        return pd.Series(g(np.asarray(value, dtype=float)), index=value.index)
 
     def _build_ci_oracle(self, max_cond_set_size: int = 2) -> list:
         """

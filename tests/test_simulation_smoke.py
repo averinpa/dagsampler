@@ -775,3 +775,145 @@ def test_force_uniform_categorical_balanced_small_sample():
     counts = result["data"]["C"].value_counts().to_dict()
     assert set(counts.keys()) <= {0, 1}
     assert abs(counts.get(0, 0) - counts.get(1, 0)) <= 1
+
+
+# ── Post-nonlinear transform tests ───────────────────────────────
+
+
+def test_post_transform_tanh():
+    """tanh post-transform should produce values in [-1, 1]."""
+    config = {
+        "simulation_params": {"n_samples": 500, "seed_structure": 900, "seed_data": 901},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Y"],
+            "edges": [["X", "Y"]],
+        },
+        "node_params": {
+            "X": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 2.0}},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "linear", "weights": {"X": 1.5}},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 1.0},
+                "post_transform": {"name": "tanh"},
+            },
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    y = result["data"]["Y"].to_numpy()
+    assert np.all(y >= -1.0) and np.all(y <= 1.0)
+    assert np.isfinite(y).all()
+
+
+def test_post_transform_none_backward_compat():
+    """Without post_transform, values can exceed [-1, 1] (no squashing)."""
+    config = {
+        "simulation_params": {"n_samples": 500, "seed_structure": 910, "seed_data": 911},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Y"],
+            "edges": [["X", "Y"]],
+        },
+        "node_params": {
+            "X": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 2.0}},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "linear", "weights": {"X": 1.5}},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 1.0},
+            },
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    y = result["data"]["Y"].to_numpy()
+    # With std=2 input and weight=1.5, values should easily exceed [-1, 1]
+    assert np.max(np.abs(y)) > 1.0
+
+
+def test_post_transform_persisted_in_parametrization():
+    """Transform name should appear in final_parametrization."""
+    config = {
+        "simulation_params": {"n_samples": 50, "seed_structure": 920, "seed_data": 921},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Y"],
+            "edges": [["X", "Y"]],
+        },
+        "node_params": {
+            "X": {"type": "continuous"},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "linear"},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 0.5},
+                "post_transform": {"name": "sin"},
+            },
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    pt = result["parametrization"]["node_params"]["Y"]["post_transform"]["name"]
+    assert pt == "sin"
+
+
+def test_post_transform_unknown_raises():
+    """Unknown transform name should raise ValueError."""
+    config = {
+        "simulation_params": {"n_samples": 50, "seed_structure": 930, "seed_data": 931},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Y"],
+            "edges": [["X", "Y"]],
+        },
+        "node_params": {
+            "X": {"type": "continuous"},
+            "Y": {
+                "type": "continuous",
+                "functional_form": {"name": "linear"},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 0.5},
+                "post_transform": {"name": "unknown_transform"},
+            },
+        },
+    }
+    with pytest.raises(ValueError, match="Unknown post_transform"):
+        CausalDataGenerator(config).simulate()
+
+
+def test_post_transform_via_default_endogenous():
+    """post_transform in default_endogenous should apply to all endogenous nodes."""
+    config = {
+        "simulation_params": {"n_samples": 500, "seed_structure": 940, "seed_data": 941},
+        "graph_params": {
+            "type": "custom",
+            "nodes": ["X", "Y", "Z"],
+            "edges": [["X", "Y"], ["X", "Z"]],
+        },
+        "node_params": {
+            "default_endogenous": {
+                "functional_form": {"name": "linear"},
+                "noise_model": {"name": "additive", "dist": "gaussian", "std": 1.0},
+                "post_transform": {"name": "tanh"},
+            },
+            "X": {"type": "continuous", "distribution": {"name": "gaussian", "mean": 0.0, "std": 2.0}},
+            "Y": {"type": "continuous"},
+            "Z": {"type": "continuous"},
+        },
+    }
+    result = CausalDataGenerator(config).simulate()
+    for node in ["Y", "Z"]:
+        vals = result["data"][node].to_numpy()
+        assert np.all(vals >= -1.0) and np.all(vals <= 1.0)
+
+
+def test_post_transform_chain_template():
+    """post_transform kwarg in chain_config should work."""
+    cfg = chain_config(
+        var_specs=[
+            {"name": "X", "type": "continuous"},
+            {"name": "Y", "type": "continuous"},
+        ],
+        mechanism="linear",
+        n_samples=500,
+        seed=950,
+        post_transform="tanh",
+    )
+    result = CausalDataGenerator(cfg).simulate()
+    y = result["data"]["Y"].to_numpy()
+    assert np.all(y >= -1.0) and np.all(y <= 1.0)

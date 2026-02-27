@@ -55,7 +55,10 @@ def _exogenous_node_params(spec: VarSpec) -> dict[str, Any]:
 
 
 def _endogenous_node_params(
-    spec: VarSpec, parents: list[VarSpec], mechanism: MechanismName
+    spec: VarSpec,
+    parents: list[VarSpec],
+    mechanism: MechanismName,
+    post_transform: str | None = None,
 ) -> dict[str, Any]:
     cfg: dict[str, Any] = {"type": spec["type"]}
     if spec["type"] == "categorical":
@@ -78,6 +81,10 @@ def _endogenous_node_params(
         cfg["noise_model"] = {"name": "additive", "dist": "gaussian", "std": 0.5}
     elif spec["type"] == "binary":
         cfg["noise_model"] = {"name": "additive", "dist": "gaussian", "std": 0.5}
+
+    if post_transform is not None and spec["type"] == "continuous":
+        cfg["post_transform"] = {"name": post_transform}
+
     return cfg
 
 
@@ -153,12 +160,14 @@ def chain_config(
     mechanism: MechanismName,
     n_samples: int,
     seed: SeedSpec = None,
+    post_transform: str | None = None,
 ) -> dict[str, Any]:
     """
     Chain: var_specs[0] -> var_specs[1] -> ... -> var_specs[-1].
     var_specs: ordered list of {"name", "type", optionally "cardinality"}.
     mechanism: "linear" (all-continuous/binary parents) or
                "stratum_means" (when any parent is categorical).
+    post_transform: optional name of a post-nonlinear transform (e.g. "tanh").
     Root node is exogenous. All others are endogenous with additive
     Gaussian noise (std=0.5) for continuous nodes; no noise for categorical.
     For categorical endogenous nodes, use "logistic_softmax" regardless of
@@ -180,7 +189,7 @@ def chain_config(
     node_params[specs[0]["name"]] = _exogenous_node_params(specs[0])
     for idx in range(1, len(specs)):
         node_params[specs[idx]["name"]] = _endogenous_node_params(
-            specs[idx], [specs[idx - 1]], mechanism
+            specs[idx], [specs[idx - 1]], mechanism, post_transform=post_transform
         )
     config["node_params"] = node_params
     return config
@@ -191,12 +200,14 @@ def fork_config(
     mechanism: MechanismName,
     n_samples: int,
     seed: SeedSpec = None,
+    post_transform: str | None = None,
 ) -> dict[str, Any]:
     """
     Fork: root -> left, root -> right.
     var_specs: dict with keys "root", "left", "right" — each a node spec
                dict {"name", "type", optionally "cardinality"}.
     mechanism: same rules as chain_config.
+    post_transform: optional name of a post-nonlinear transform (e.g. "tanh").
     root is exogenous; left and right are endogenous.
     """
     root = _normalize_var_spec(var_specs["root"])
@@ -212,8 +223,8 @@ def fork_config(
     }
     config["node_params"] = {
         root["name"]: _exogenous_node_params(root),
-        left["name"]: _endogenous_node_params(left, [root], mechanism),
-        right["name"]: _endogenous_node_params(right, [root], mechanism),
+        left["name"]: _endogenous_node_params(left, [root], mechanism, post_transform=post_transform),
+        right["name"]: _endogenous_node_params(right, [root], mechanism, post_transform=post_transform),
     }
     return config
 
@@ -223,11 +234,13 @@ def collider_config(
     mechanism: MechanismName,
     n_samples: int,
     seed: SeedSpec = None,
+    post_transform: str | None = None,
 ) -> dict[str, Any]:
     """
     Collider: left -> collider, right -> collider.
     var_specs: dict with keys "left", "right", "collider" — each a node spec dict.
     mechanism: same rules as chain_config.
+    post_transform: optional name of a post-nonlinear transform (e.g. "tanh").
     left and right are exogenous; collider is endogenous with two parents.
     """
     left = _normalize_var_spec(var_specs["left"])
@@ -244,6 +257,6 @@ def collider_config(
     config["node_params"] = {
         left["name"]: _exogenous_node_params(left),
         right["name"]: _exogenous_node_params(right),
-        collider["name"]: _endogenous_node_params(collider, [left, right], mechanism),
+        collider["name"]: _endogenous_node_params(collider, [left, right], mechanism, post_transform=post_transform),
     }
     return config
